@@ -2,3 +2,6 @@ name = "SDGiBS"
 uuid = "bdbfcd24-1305-4a9e-a6ec-cba807ed5493"
 authors = ["Ryan Park <ryanjpark03@gmail.com>"]
 version = "0.1.0"
+
+[deps]
+BlockArrays = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
