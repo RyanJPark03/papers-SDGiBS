@@ -35,7 +35,7 @@ function init_player(;
     cost :: Function,
     final_cost :: Function,
     action_space :: Int = -1,
-    default_action :: BlockVector{Float64} = nothing.
+    default_action :: BlockVector{Float64} = nothing,
     time :: Int = 1)
 
     # Check inputs are good
@@ -70,15 +70,8 @@ function init_player(;
 end
 
 function handle_SBDiBS_action(players :: Array{player}, env :: base_environment, current_player_index :: Int)
-    player = players[current_player_index]
-    all_beliefs = BlockVector{Float64}(vcat([player.belief for player in players]...), [length(player.belief) for player in players])
-
-    (b̄, ū, π) = SDGiBS_solve_action(all_beliefs, env, current_player_index)
+    (b̄, ū, π) = SDGiBS_solve_action(players, env, current_player_index)
     players[current_player_index].predicted_belief = b̄[Block(current_player_index)]
     players[current_player_index].predicted_control = ū[Block(current_player_index)]
     players[current_player_index].feedback_law = π
-end
-
-function belief_update(belief :: BlockVector{Float64}, observation :: BlockVector{Float64}, env :: base_environment)
-    return 1
 end
