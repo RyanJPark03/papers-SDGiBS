@@ -1,4 +1,6 @@
-using BlockArrays
+# using BlockArrays
+
+# include("Environment.jl")
 
 export player_type
 @enum player_type begin
@@ -13,6 +15,7 @@ struct player{}
     player_id :: Int
     belief :: BlockVector{Float64}
     cost :: Function
+    final_cost :: Function
     # tuple of (belief, observation, action) pairs
     history :: Array{Tuple{BlockVector{Float64}, BlockVector{Float64}, BlockVector{Float64}}}
     belief_updater :: Function
@@ -29,7 +32,8 @@ function init_player(;
     player_type :: player_type = -1,
     player_id :: Int = -1,
     belief :: BlockVector{Float64} = nothing,
-    cost :: Function = () -> Inf,
+    cost :: Function,
+    final_cost :: Function,
     action_space :: Int = -1,
     default_action :: BlockVector{Float64} = nothing.
     time :: Int = 1)
@@ -61,7 +65,7 @@ function init_player(;
         return nothing
     end
 
-    player(player_type, player_id, belief, cost, [], belief_updater, action_selector, action_space,
+    player(player_type, player_id, belief, cost, final_cost, [], belief_updater, action_selector, action_space,
         predicted_belief, predicted_control, feedback_law)
 end
 
@@ -73,4 +77,8 @@ function handle_SBDiBS_action(players :: Array{player}, env :: base_environment,
     players[current_player_index].predicted_belief = b̄[Block(current_player_index)]
     players[current_player_index].predicted_control = ū[Block(current_player_index)]
     players[current_player_index].feedback_law = π
+end
+
+function belief_update(belief :: BlockVector{Float64}, observation :: BlockVector{Float64}, env :: base_environment)
+    return 1
 end

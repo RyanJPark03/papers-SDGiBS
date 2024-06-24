@@ -1,6 +1,6 @@
-using BlockArrays # TODO: might not be needed idk
+# using BlockArrays
 
-struct Base_Environment{}
+struct base_environment{}
     state_dynamics :: Function
     belief_dynamics :: Function
     observation_function :: Function

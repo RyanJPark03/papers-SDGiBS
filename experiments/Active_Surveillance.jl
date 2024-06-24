@@ -14,7 +14,7 @@ include("Players.jl")
 
 struct surveillance_demo{}
     env :: base_environment
-    players :: Array{Player}
+    players :: Array{player}
 end
 
 function active_surveillance_demo()
@@ -34,21 +34,7 @@ function active_surveillance_demo()
     fig
 end
 
-function init(;initial_beliefs :: Array{BlockVector{Float64}} = nothing, initial_grid_size :: Tuple{Int}  = (10, 10),
-    L :: Int = 1)
-
-    grid_size :: Tuple{Int} = initial_grid_size
-
-    βₒ¹ = BlockVector{Float64}([rand(1:grid_size[1]), rand(1:grid_size[2]), 0, 1,
-        1.0, 1.0, 1.0, .5], [4, 4]) # 4 for state, 4 for covariance
-    βₒ² = BlockVector{Float64}([rand(1:grid_size[1]), rand(1:grid_size[2]), 0, 1,
-        1.0, 1.0, 1.0, .5], [4, 4])
-
-    if !isnothing(initial_beliefs)
-        βₒ¹ = initial_beliefs[1]
-        βₒ² = initial_beliefs[2]
-    end
-    β = [βₒ¹, βₒ²]
+function init(;L :: Int = 1)
 
     function state_dynamics(states :: BlockVector{Float64}, u :: BlockVector{Float64}; τ :: Float64 = 1.0, M :: Function = (u) -> 1.0 * norm(u), motion_noise :: Int = 1)
         new_state = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
@@ -105,11 +91,40 @@ function init(;initial_beliefs :: Array{BlockVector{Float64}} = nothing, initial
     initial_state = initial_state,
     final_time = -1)
 
+    # cov matrix 2 0 ; 0 2
+    initial_beliefs = BlockVector{Float64}(vcat(initial_state[1], [2, 0, 0, 2], initial_state[2], [2, 0, 0, 2]))
+    function cₖ¹(β :: BlockVector{Float64}, u :: BlockVector{Float64})
+        R = Matrix(.1 * I, 2, 2)
+        return u[Block(1)]' * R * u[Block(1)]
+    end
+    function cₗ¹(β :: BlockVector{Float64}, u :: BlockVector{Float64})
+        return determinant(reshape(β[Block(2)][5:8], (2, 2)))
+    end
+    α₁ = 1.0
+    α₂ = 1.0
+    vₖ_des = 1.0
+    function c_coll(β :: BlockVector{Float64})
+        # "c_coll = exp(-d(xₖ)). Here d(xₖ) is the expcted euclidean distance
+        # until collision between the two agents, taking their outline into account."
+        # TODO wtf does "taking their outline into account" mean???
+        return norm(β[Block(1)][1:2] - β[Block(2)][1:2], 2)
+    end
+    function cₖ²(β :: BlockVector{Float64}, u :: BlockVector{Float64})
+        R = Matrix(.1 * I, 2, 2)
+        return u[Block(2)]' * R * u[Block(2)] + α₁(β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
+    end
+    function cₗ²(β :: BlockVector{Float64}, u :: BlockVector{Float64})
+        return α₁ * (β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
+    end
+    costs = [cₖ¹, cₖ²]
+    final_costs = [cₗ¹,  cₗ²]
+
     players = [init_player(;
     player_type = SDGiBS,
     player_id = i,
-    belief = β[i],
-    cost = () -> Inf, # TODO: cost
+    belief = initial_beliefs[i],
+    cost = costs[i],
+    final_cost = final_costs[i],
     action_space = 2,
     default_action = [0, 0].
     time = 20) for i in 1:2]
