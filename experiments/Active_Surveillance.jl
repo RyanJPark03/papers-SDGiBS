@@ -13,7 +13,7 @@ include("Players.jl")
 
 
 struct surveillance_demo{}
-    env :: Base_Environment
+    env :: base_environment
     players :: Array{Player}
 end
 
@@ -95,7 +95,7 @@ function init(;initial_beliefs :: Array{Array{Vector{Float64}(undef, 2), Matrix{
     initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 1.0]
 
 
-    env = init_Base_Environment(;
+    env = init_base_environment(;
     state_dynamics = state_dynamics,
     observation_function = observation_function,
     num_agents = 2,

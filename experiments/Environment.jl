@@ -13,7 +13,7 @@ struct Base_Environment{}
 end
 
 
-function init_Base_Environment(;
+function init_base_environment(;
     state_dynamics :: Function,
     belief_dynamics :: Function,
     observation_function :: Function,
@@ -24,7 +24,7 @@ function init_Base_Environment(;
 
     #TODO: assert that all dimensions line up correctly, potentially init some stuff
 
-    Base_Environment(
+    base_environment(
         state_dynamics, 
         belief_dynamics,
         observation_function,
@@ -36,7 +36,7 @@ function init_Base_Environment(;
         final_time)
 end
 
-function unroll(env :: Base_Environment, actions :: Vector{BlockVector{Float64}}, time_steps :: Int)
+function unroll(env :: base_environment, actions :: Vector{BlockVector{Float64}}, time_steps :: Int)
     if time_steps + env.time > env.final_time
         println("Time steps exceed final time")
         return nothing
@@ -52,6 +52,6 @@ function unroll(env :: Base_Environment, actions :: Vector{BlockVector{Float64}}
     return states
 end
 
-function observations(env :: Base_Environment)
+function observations(env :: base_environment)
     return env.observation_function(env.current_state)
 end
