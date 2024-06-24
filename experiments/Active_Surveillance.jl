@@ -34,19 +34,21 @@ function active_surveillance_demo()
     fig
 end
 
-function init(;initial_beliefs :: Array{Array{Vector{Float64}(undef, 2), Matrix{Float64}(undef, 2, 2)}} = nothing, initial_grid_size :: Tuple{Int}  = (10, 10), L :: Int = 1)
-    βₒ¹ = Array{Vector{Float64}(undef, 2), Matrix{Float64}(undef, 2, 2)}
-    βₒ² = Array{Vector{Float64}(undef, 2), Matrix{Float64}(undef, 2, 2)}
+function init(;initial_beliefs :: Array{BlockVector{Float64}} = nothing, initial_grid_size :: Tuple{Int}  = (10, 10),
+    L :: Int = 1)
 
-    grid_size :: Tuple{Int} = initial_grid_size 
+    grid_size :: Tuple{Int} = initial_grid_size
+
+    βₒ¹ = BlockVector{Float64}([rand(1:grid_size[1]), rand(1:grid_size[2]), 0, 1,
+        1.0, 1.0, 1.0, .5], [4, 4]) # 4 for state, 4 for covariance
+    βₒ² = BlockVector{Float64}([rand(1:grid_size[1]), rand(1:grid_size[2]), 0, 1,
+        1.0, 1.0, 1.0, .5], [4, 4])
 
     if !isnothing(initial_beliefs)
         βₒ¹ = initial_beliefs[1]
         βₒ² = initial_beliefs[2]
-    else
-        βₒ¹ = [Vector{Float64}([rand(1:grid_size[1]), rand(1:grid_size[2])]), Matrix(1.0I, 2, 2)]
-        βₒ² = [Vector{Float64}([rand(1:grid_size[1]), rand(1:grid_size[2])]), Matrix(1.0I, 2, 2)]
     end
+    β = [βₒ¹, βₒ²]
 
     function state_dynamics(states :: BlockVector{Float64}, u :: BlockVector{Float64}; τ :: Float64 = 1.0, M :: Function = (u) -> 1.0 * norm(u), motion_noise :: Int = 1)
         new_state = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
@@ -103,10 +105,14 @@ function init(;initial_beliefs :: Array{Array{Vector{Float64}(undef, 2), Matrix{
     initial_state = initial_state,
     final_time = -1)
 
-    demo = surveillance_demo{env, []}
-
-    demo.players = [] # TODO: implement player struct
-    # TODO: init players
+    players = [init_player(;
+    player_type = SDGiBS,
+    player_id = i,
+    belief = β[i],
+    cost = () -> Inf, # TODO: cost
+    action_space = 2,
+    default_action = [0, 0].
+    time = 20) for i in 1:2]
     
-    return 
+    return surveillance_demo{env, players}
 end
