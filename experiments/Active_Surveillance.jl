@@ -19,9 +19,10 @@ end
 
 function active_surveillance_demo()
 
-    demo = init(; initial_beliefs = nothing, initial_grid_size = (10, 10), L = 1)
+    demo = init(; L = 1)
 
     controls = nothing # TODO: get controls from players
+    error("controls not implemented")
     trajectory = unroll(demo.env, controls, 20)
 
     coords1 = [x[Block(1)][1:2] for x in trajectory]
@@ -39,8 +40,8 @@ function init(;L :: Int = 1)
     function state_dynamics(states :: BlockVector{Float64}, u :: BlockVector{Float64}; τ :: Float64 = 1.0, M :: Function = (u) -> 1.0 * norm(u), motion_noise :: Int = 1)
         new_state = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
         for i in eachindex(blocks(states))
-            [x, y, θ, v] = states[Block(i)]
-            [accel, steer] = u[Block(i)]
+            x, y, θ, v = states[Block(i)]
+            accel, steer = u[Block(i)]
 
             # TODO: Find a good value for L
             ẋ = [ v * cos(θ), v * sin(θ), accel, v / (L * tan(steer))]'
@@ -82,7 +83,6 @@ function init(;L :: Int = 1)
     initial_state[Block(1)] .= [-10.0, 20.0, 0.0, 1.0] # Player 1, surveiller
     initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 1.0]
 
-
     env = init_base_environment(;
     state_dynamics = state_dynamics,
     observation_function = observation_function,
@@ -92,7 +92,10 @@ function init(;L :: Int = 1)
     final_time = -1)
 
     # cov matrix 2 0 ; 0 2
-    initial_beliefs = BlockVector{Float64}(vcat(initial_state[1], [2, 0, 0, 2], initial_state[2], [2, 0, 0, 2]))
+    initial_beliefs = BlockVector{Float64}(undef, [8, 8])
+    initial_beliefs[Block(1)] .= vcat(initial_state[Block(1)],[2, 0, 0, 2])
+    initial_beliefs[Block(2)] .= vcat(initial_state[Block(2)],[2, 0, 0, 2])
+
     function cₖ¹(β :: BlockVector{Float64}, u :: BlockVector{Float64})
         R = Matrix(.1 * I, 2, 2)
         return u[Block(1)]' * R * u[Block(1)]
@@ -122,11 +125,11 @@ function init(;L :: Int = 1)
     players = [init_player(;
     player_type = SDGiBS,
     player_id = i,
-    belief = initial_beliefs[i],
+    belief = initial_beliefs[i], 
     cost = costs[i],
     final_cost = final_costs[i],
     action_space = 2,
-    default_action = [0, 0].
+    default_action = [0, 0],
     time = 20) for i in 1:2]
     
     return surveillance_demo{env, players}
