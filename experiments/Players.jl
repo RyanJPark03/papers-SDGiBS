@@ -13,7 +13,7 @@ export player
 struct player{}
     player_type :: player_type
     player_id :: Int
-    belief :: BlockVector{Float64}
+    belief :: Vector{Float64}
     cost :: Function
     final_cost :: Function
     # tuple of (belief, observation, action) pairs
@@ -31,11 +31,11 @@ export init_player
 function init_player(;
     player_type :: player_type = -1,
     player_id :: Int = -1,
-    belief :: BlockVector{Float64} = nothing,
+    belief :: Vector{Float64} = nothing,
     cost :: Function,
     final_cost :: Function,
     action_space :: Int = -1,
-    default_action :: BlockVector{Float64} = nothing,
+    default_action :: Vector{Float64} = nothing,
     time :: Int = 1)
 
     # Check inputs are good
@@ -43,7 +43,7 @@ function init_player(;
 
     # everyone should use the same belief updater (from the paper)
     # belief_updater :: Function = () -> true
-    belief_updater :: Function = (player :: player, observation :: BlockVector{Float64}) ->
+    belief_updater :: Function = (player :: player, observation :: Vector{Float64}) ->
         belief_update(player.belief, observation)
     action_selector :: Function = () -> true
 
@@ -52,10 +52,10 @@ function init_player(;
     feedback_law = nothing
 
     if player_type == no_change
-        action_selector = (player :: player, observation :: BlockVector{Float64}) -> default_action
+        action_selector = (player :: player, observation :: Vector{Float64}) -> default_action
     elseif player_type == random
-        action_selector = (player :: player, observation :: BlockVector{Float64}) ->
-            BlockVector{Float64}(rand(action_space))
+        action_selector = (player :: player, observation :: Vector{Float64}) ->
+            rand(action_space)
     elseif player_type == SDGiBS
         # TODO: some optimization if all players are SDGiBS
         action_selector = handle_SGDiBS_action
