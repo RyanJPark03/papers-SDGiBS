@@ -2,7 +2,6 @@
 
 struct base_environment{}
     state_dynamics :: Function
-    belief_dynamics :: Function
     observation_function :: Function
     num_agents :: Int
     state_dim :: Int
@@ -15,7 +14,6 @@ end
 
 function init_base_environment(;
     state_dynamics :: Function,
-    belief_dynamics :: Function,
     observation_function :: Function,
     num_agents :: Int,
     state_dim :: Int,
@@ -25,8 +23,7 @@ function init_base_environment(;
     #TODO: assert that all dimensions line up correctly, potentially init some stuff
 
     base_environment(
-        state_dynamics, 
-        belief_dynamics,
+        state_dynamics,
         observation_function,
         num_agents,
         state_dim,
