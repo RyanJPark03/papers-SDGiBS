@@ -21,7 +21,8 @@ function active_surveillance_demo()
 
     demo = init(; L = 1)
 
-    controls = nothing # TODO: get controls from players
+    controls = [player.action_selector(player, observations(demo.env)) for player in demo.players]
+     # TODO: get controls from players
     error("controls not implemented")
     trajectory = unroll(demo.env, controls, 20)
 

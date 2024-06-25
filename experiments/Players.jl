@@ -16,8 +16,8 @@ struct player{}
     belief :: Vector{Float64}
     cost :: Function
     final_cost :: Function
-    # tuple of (belief, observation, action) pairs
-    history :: Array{Tuple{BlockVector{Float64}, BlockVector{Float64}, BlockVector{Float64}}}
+    # tuple of (observation, belief, action) pairs
+    history :: Array
     belief_updater :: Function
     action_selector :: Function
     action_space :: Int
@@ -71,9 +71,36 @@ function init_player(;
         predicted_belief, predicted_control, feedback_law)
 end
 
-function handle_SDGiBS_action(players :: Array{player}, env :: base_environment, current_player_index :: Int)
+function handle_SDGiBS_action(players :: Array{player}, env :: base_environment,
+        current_player_index :: Int)
     (b̄, ū, π) = SDGiBS_solve_action(players, env, current_player_index)
     players[current_player_index].predicted_belief = b̄[Block(current_player_index)]
     players[current_player_index].predicted_control = ū[Block(current_player_index)]
     players[current_player_index].feedback_law = π
+end
+
+function time_step(player_index :: Int = -1, observation :: Vector{Float64},
+        env :: base_environment)
+    # TODO: What is the order? Observation -> update belief -> select action
+
+    player = env.players[player_index]
+
+    # Record observation
+    push!(player.history, [observation])
+
+    # Players start at "time 0" with a prior belief
+    # TODO: start environment at time 1, initilize priors
+    @assert length(player.history) == env.time
+
+    # Update belief and record
+    player.belief = player.belief_updater(player, observation)
+    push!(player.history[end], player.belief)
+
+    # Select action
+    if player.player_type == SDGiBS
+        player.action_selector(env.players, env, player_index)
+        return player.predicted_control[env.time]
+    else
+        return player.action_selector(player, observation)
+    end
 end
