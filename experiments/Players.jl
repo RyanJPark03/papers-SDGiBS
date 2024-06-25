@@ -22,9 +22,9 @@ struct player{}
     action_selector :: Function
     action_space :: Int
     # SDGiBS specific
-    predicted_belief :: BlockVector{Float64}
-    predicted_control :: BlockVector{Float64}
-    feedback_law :: Function
+    predicted_belief :: Vector{Vector{Float64}}
+    predicted_control :: Vector{Vector{Float64}}
+    feedback_law
 end
 
 export init_player
@@ -39,7 +39,9 @@ function init_player(;
     time :: Int = 1)
 
     # Check inputs are good
-    player_type < 0 || isnothing(belief) || action_space < 0 || error("One or more inputs must be specified")
+    if Integer(player_type) < 0 || isnothing(belief) || action_space < 0
+        error("One or more inputs must be specified")
+    end
 
     # everyone should use the same belief updater (from the paper)
     # belief_updater :: Function = () -> true
@@ -58,7 +60,7 @@ function init_player(;
             rand(action_space)
     elseif player_type == SDGiBS
         # TODO: some optimization if all players are SDGiBS
-        action_selector = handle_SGDiBS_action
+        action_selector = handle_SDGiBS_action
             
     else
         error("Unimplemented player type or unknown player type $player_type")
@@ -69,7 +71,7 @@ function init_player(;
         predicted_belief, predicted_control, feedback_law)
 end
 
-function handle_SBDiBS_action(players :: Array{player}, env :: base_environment, current_player_index :: Int)
+function handle_SDGiBS_action(players :: Array{player}, env :: base_environment, current_player_index :: Int)
     (b̄, ū, π) = SDGiBS_solve_action(players, env, current_player_index)
     players[current_player_index].predicted_belief = b̄[Block(current_player_index)]
     players[current_player_index].predicted_control = ū[Block(current_player_index)]

@@ -129,8 +129,8 @@ function init(;L :: Int = 1)
     cost = costs[i],
     final_cost = final_costs[i],
     action_space = 2,
-    default_action = [0, 0],
+    default_action = [0.0, 0.0],
     time = 20) for i in 1:2]
     
-    return surveillance_demo{env, players}
+    return surveillance_demo(env, players)
 end
