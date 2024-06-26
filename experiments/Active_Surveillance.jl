@@ -26,11 +26,9 @@ function active_surveillance_demo()
     for tt in 1:demo.env.final_time
         # time_step could return a block vector already, not entirely sure
         controls = BlockVector(time_step_all(demo.players, demo.env, observations(demo.env)))
-        # TODO: get controls from players
-        # error("controls not implemented")
         push!(trajectory, unroll(demo.env, controls, 1;
         # TODO: noise should be normally distributed
-         noise=Vector{Float64}([rand(-motion_nosie:motion_noise), rand(-motion_nosie:motion_noise)]))...)
+            noise=Vector{Float64}([rand(-motion_nosie:motion_noise), rand(-motion_nosie:motion_noise)]))...)
     end
 	
 	coords1 = [x[Block(1)][1:2] for x in trajectory]

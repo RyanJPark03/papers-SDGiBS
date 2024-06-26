@@ -110,7 +110,7 @@ function time_step(player_index::Int = -1, observation::Vector{Float64},
 end
 
 export time_step_all
-function time_step_all(players::Array{player}, env::base_environment, observations::BlockVector{Float64},)
+function time_step_all(players::Array{player}, env::base_environment, observations::BlockVector{Float64})
     # Observation, belief, then action, lets say we start with prior -> observation -> belief ->action
     # We count the first action as time 1
 

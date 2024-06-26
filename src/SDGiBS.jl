@@ -26,6 +26,7 @@ function belief_update(env::base_environment, players::Array{players}, observati
 
     # TODO: noise should be normally distributed
 
+    #TODO: check if this is correct
     Aₖ = substitute.(Symbolics.gradient(f, x), (Dict(x => x̂ₖ, u => uₖ, m => [0, 0]),))
     Mₖ = substitute.(Symbolics.gradient(f, m), (Dict(x => x̂ₖ, u => uₖ, m => [0, 0]),))
     Hₖ = substitute.(Symbolics.gradient(h, x), (Dict(x => x̂ₖ₊₁, n => [0, 0]),))
@@ -40,15 +41,65 @@ function belief_update(env::base_environment, players::Array{players}, observati
     x̂_temp = BlockVector(x̂ₖ₊₁, state_lengths)
     Σ_temp = BlockVector(Σₖ₊₁, cov_lengths)
 
-    β = BlockVector([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(env.players)]..., 
+    β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(env.players)]...), 
                     [state_lengths[i] + cov_lengths[i] for i in eachindex(env.players)])
 	return β
 end
 
 export SDGiBS_solve_action
-function SDGiBS_solve_action(players::Array{T1}, env::T2)
-	# TODO: datatype T must have a "belief," "cost" 
+function SDGiBS_solve_action(players::Array, env::base_environment) 
+    bₒ = BlockVector([player.history[env.time][2] for player in players],
+                    [length(player.history[env.time][2]) for player in players])
+    
+    ū = [player.predicted_control[env.time:end]... for player in players]
+
+    cₖ = BlockVector([player.cost for player in players],
+                    [1 for _ in eachindex(players)])
+
+    cₗ = BlockVector([player.final_cost for player in players],
+                    [1 for _ in eachindex(players)])
+	
+    b̄ = []
+    push!(b̄, bₒ)
+    normal_distr = MvNormal([0, 0], Matrix(1.0 * I, 2, 2))
+    for tt in 1:env.final_time - env.time + 1 # TODO: think abt this one
+        # roll out b̄
+        push!(b̄, env.state_dynamics(b̄[end], [ū[i][tt] for i in eachindex(players)], rand(2, normal_distr)))
+    end
+
+    # Iteration variables
+    Q_old = [Inf for _ in eachindex(players)]
+    ϵ = 1e-5
+    Q_new = cost(players, b̄, ū)
+
+    # Derivative variables
+    @variables b̃[1:sum([length(player.history[env.time][2]) for player in players])]
+    b = Symbolics.scalarize(b̃)
+    
+    while norm(Q_new - Q_old, 2) > ϵ
+        # Bakcwards Pass
+
+    end
+
+
 	return [1, 1]
+end
+
+function cost(players, b, u)
+    cₖ = BlockVector([player.cost for player in players],
+                    [1 for _ in eachindex(players)])
+
+    cₗ = BlockVector([player.final_cost for player in players],
+                    [1 for _ in eachindex(players)])
+
+    Q = [0 for _ in eachindex(players)]
+
+    for ii in eachindex(players)
+        for tt in eachindex(b[Block(ii)])
+            Q[ii] += cₖ[Block(ii)](b[tt][Block(ii)], u[tt][Block(ii)])
+        end
+    end
+    return Q
 end
 
 end
