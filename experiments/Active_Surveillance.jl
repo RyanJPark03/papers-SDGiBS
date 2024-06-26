@@ -24,8 +24,8 @@ function active_surveillance_demo()
     push!(trajectory, demo.env.current_state)
 
     for tt in 1:demo.env.final_time
-        controls = BlockVector([player.time_step(player, observations(demo.env))
-                    for player in demo.players], [2 for _ in demo.players])
+        # time_step could return a block vector already, not entirely sure
+        controls = BlockVector(time_step_all(demo.players, demo.env, observations(demo.env)))
         # TODO: get controls from players
         # error("controls not implemented")
         push!(trajectory, unroll(demo.env, controls, 1)...)

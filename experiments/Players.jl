@@ -45,6 +45,8 @@ function init_player(;
 
 	# everyone should use the same belief updater (from the paper)
 	# belief_updater :: Function = () -> true
+    
+    # probably vestigial since everyone should use the same belief updater
 	belief_updater::Function = (player::player, observation::Vector{Float64}) ->
 		belief_update(player.belief, observation)
 	action_selector::Function = () -> true
@@ -73,13 +75,15 @@ end
 
 function handle_SDGiBS_action(players::Array{player}, env::base_environment,
 	current_player_index::Int)
-	(b̄, ū, π) = SDGiBS_solve_action(players, env, current_player_index)
+    # probably no π
+	(b̄, ū, π) = SDGiBS_solve_action(players, env)
 	players[current_player_index].predicted_belief = b̄[Block(current_player_index)]
 	players[current_player_index].predicted_control = ū[Block(current_player_index)]
 	players[current_player_index].feedback_law = π
     return players[current_player_index].predicted_control[env.time]
 end
 
+# Vestigial, using time_step_all
 function time_step(player_index::Int = -1, observation::Vector{Float64},
 	env::base_environment)
 	# TODO: What is the order? Observation -> update belief -> select action
@@ -103,4 +107,35 @@ function time_step(player_index::Int = -1, observation::Vector{Float64},
 	else
 		return player.action_selector(player, observation)
 	end
+end
+
+export time_step_all
+function time_step_all(players::Array{player}, env::base_environment, observations::BlockVector{Float64},)
+    # Observation, belief, then action, lets say we start with prior -> observation -> belief ->action
+    # We count the first action as time 1
+
+    # update all beliefs
+    # temporarily store all new beliefs
+
+    # Got observations already
+
+    # Get updated beliefs
+    new_beliefs = belief_update(env, players, observations)
+
+    # Do actions
+    all_actions = BlockVector{Float64}(undef, [player.action_space for player in players])
+    for ii in eachindex(players)
+        player = players[ii]
+        push!(player.history, [observations[Block(ii)], player.belief])
+        player.belief = new_beliefs[Block(ii)]
+
+        if player.player_type == SDGiBS
+            all_actions[Block(ii)] .= handle_SDGiBS_action(players, env, ii)
+        else
+            all_actions[Block(ii)] .= action_selector(player, observations[Block(ii)])
+        end
+        push!(player.history[end], all_actions[Block(ii)])
+    end
+
+    return all_actions
 end
