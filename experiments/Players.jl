@@ -77,6 +77,7 @@ function handle_SDGiBS_action(players::Array{player}, env::base_environment,
 	players[current_player_index].predicted_belief = b̄[Block(current_player_index)]
 	players[current_player_index].predicted_control = ū[Block(current_player_index)]
 	players[current_player_index].feedback_law = π
+    return players[current_player_index].predicted_control[env.time]
 end
 
 function time_step(player_index::Int = -1, observation::Vector{Float64},
@@ -98,8 +99,7 @@ function time_step(player_index::Int = -1, observation::Vector{Float64},
 
 	# Select action
 	if player.player_type == SDGiBS
-		player.action_selector(env.players, env, player_index)
-		return player.predicted_control[env.time]
+		return player.action_selector(env.players, env, player_index)
 	else
 		return player.action_selector(player, observation)
 	end
