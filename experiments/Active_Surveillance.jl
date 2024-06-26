@@ -20,12 +20,17 @@ end
 function active_surveillance_demo()
 
 	demo = init(; L = 1)
+    trajectory = []
+    push!(trajectory, demo.env.current_state)
 
-	controls = [player.action_selector(player, observations(demo.env)) for player in demo.players]
-	# TODO: get controls from players
-	error("controls not implemented")
-	trajectory = unroll(demo.env, controls, 20)
-
+    for tt in 1:demo.env.final_time
+        controls = BlockVector([player.time_step(player, observations(demo.env))
+                    for player in demo.players], [2 for _ in demo.players])
+        # TODO: get controls from players
+        # error("controls not implemented")
+        push!(trajectory, unroll(demo.env, controls, 1)...)
+    end
+	
 	coords1 = [x[Block(1)][1:2] for x in trajectory]
 	coords2 = [x[Block(2)][1:2] for x in trajectory]
 
