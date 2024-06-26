@@ -28,7 +28,9 @@ function active_surveillance_demo()
         controls = BlockVector(time_step_all(demo.players, demo.env, observations(demo.env)))
         # TODO: get controls from players
         # error("controls not implemented")
-        push!(trajectory, unroll(demo.env, controls, 1)...)
+        push!(trajectory, unroll(demo.env, controls, 1;
+        # TODO: noise should be normally distributed
+         noise=Vector{Float64}([rand(-motion_nosie:motion_noise), rand(-motion_nosie:motion_noise)]))...)
     end
 	
 	coords1 = [x[Block(1)][1:2] for x in trajectory]
@@ -43,7 +45,7 @@ end
 
 function init(; L::Int = 1)
 
-	function state_dynamics(states::BlockVector{Float64}, u::BlockVector{Float64}; τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u), motion_noise::Int = 1)
+	function state_dynamics(states::BlockVector{Float64}, u::BlockVector{Float64}, m::Vector{Float64}; τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u))
 		new_state = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
 		for i in eachindex(blocks(states))
 			x, y, θ, v = states[Block(i)]
@@ -52,8 +54,8 @@ function init(; L::Int = 1)
 			# TODO: Find a good value for L
 			ẋ = [v * cos(θ), v * sin(θ), accel, v / (L * tan(steer))]'
 
-			mₖ = Vector{Float64}([rand(-motion_nosie:motion_noise), rand(-motion_nosie:motion_noise)])
-
+			# mₖ = Vector{Float64}([rand(-motion_nosie:motion_noise), rand(-motion_nosie:motion_noise)])
+            mₖ = m
 			# M scales motion noise mₖ according to size of u[i]
 			new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * mₖ
 		end
@@ -61,6 +63,7 @@ function init(; L::Int = 1)
 		return new_states
 	end
 
+    # TODO: unused??
 	function measurement_noise_scaler(state::Vector{Float64}; surveillance_radius::Int = 10)
 		# Only take x and y coords from state vector
 		n = norm(state[1:2], 2) - surveillance_radius
@@ -94,6 +97,7 @@ function init(; L::Int = 1)
 		observation_function = observation_function,
 		num_agents = 2,
 		state_dim = 4,
+        nosie_dim = 2,
 		initial_state = initial_state,
 		final_time = -1)
 
