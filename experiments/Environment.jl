@@ -46,7 +46,7 @@ function unroll(env::base_environment, actions::Vector{BlockVector{Float64}}, ti
 	end
 	env.time += time_steps
 	env.current_state = states[end]
-	return states
+	return states[2:end]
 end
 
 function observations(env::base_environment)
