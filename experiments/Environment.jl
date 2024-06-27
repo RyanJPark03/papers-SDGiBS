@@ -5,7 +5,8 @@ struct base_environment{}
 	observation_function::Function
 	num_agents::Int
 	state_dim::Int
-    nosie_dim::Int
+    dynamics_noise_dim::Int
+    observation_noise_dim::Int
 	initial_state::BlockVector{Float64}
 	current_state::BlockVector{Float64}
 	time::Int
@@ -18,7 +19,8 @@ function init_base_environment(;
 	observation_function::Function,
 	num_agents::Int,
 	state_dim::Int,
-    noise_dim::Int,
+    dynamics_noise_dim::Int,
+    observation_noise_dim::Int,
 	initial_state::BlockVector{Float64},
 	final_time::Int = -1)
 
@@ -29,7 +31,8 @@ function init_base_environment(;
 		observation_function,
 		num_agents,
 		state_dim,
-        noise_dim,
+        dynamics_noise_dim,
+        observation_noise_dim,
 		initial_state,
 		initial_state,
 		0,
@@ -58,5 +61,5 @@ function unroll(env::base_environment, actions::Vector{BlockVector{Float64}}, ti
 end
 
 function observations(env::base_environment)
-	return env.observation_function(env.current_state)
+	return env.observation_function(; states = env.current_state)
 end

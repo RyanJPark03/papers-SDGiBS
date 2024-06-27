@@ -1,12 +1,12 @@
 # using BlockArrays
 
-# include("Environment.jl")
+using SDGiBS
 
 export player_type
 @enum player_type begin
 	no_change
 	random
-	SDGiBS
+	type_SDGiBS
 end
 
 export player
@@ -60,7 +60,7 @@ function init_player(;
 	elseif player_type == random
 		action_selector = (player::player, observation::Vector{Float64}) ->
 			rand(action_space)
-	elseif player_type == SDGiBS
+	elseif player_type == type_SDGiBS
 		# TODO: some optimization if all players are SDGiBS
 		action_selector = handle_SDGiBS_action
 
@@ -84,30 +84,30 @@ function handle_SDGiBS_action(players::Array{player}, env::base_environment,
 end
 
 # Vestigial, using time_step_all
-function time_step(player_index::Int = -1, observation::Vector{Float64},
-	env::base_environment)
-	# TODO: What is the order? Observation -> update belief -> select action
+# function time_step(player_index::Int = -1, observation::Vector{Float64},
+# 	env::base_environment)
+# 	# TODO: What is the order? Observation -> update belief -> select action
 
-	player = env.players[player_index]
+# 	player = env.players[player_index]
 
-	# Record observation
-	push!(player.history, [observation])
+# 	# Record observation
+# 	push!(player.history, [observation])
 
-	# Players start at "time 0" with a prior belief
-	# TODO: start environment at time 1, initilize priors
-	@assert length(player.history) == env.time
+# 	# Players start at "time 0" with a prior belief
+# 	# TODO: start environment at time 1, initilize priors
+# 	@assert length(player.history) == env.time
 
-	# Update belief and record
-	player.belief = player.belief_updater(player, observation)
-	push!(player.history[end], player.belief)
+# 	# Update belief and record
+# 	player.belief = player.belief_updater(player, observation)
+# 	push!(player.history[end], player.belief)
 
-	# Select action
-	if player.player_type == SDGiBS
-		return player.action_selector(env.players, env, player_index)
-	else
-		return player.action_selector(player, observation)
-	end
-end
+# 	# Select action
+# 	if player.player_type == SDGiBS
+# 		return player.action_selector(env.players, env, player_index)
+# 	else
+# 		return player.action_selector(player, observation)
+# 	end
+# end
 
 export time_step_all
 function time_step_all(players::Array{player}, env::base_environment, observations::BlockVector{Float64})
@@ -120,7 +120,8 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
     # Got observations already
 
     # Get updated beliefs
-    new_beliefs = belief_update(env, players, observations)
+    new_beliefs = SDGiBS.belief_update(env, players, observations)
+    println("hi")
 
     # Do actions
     all_actions = BlockVector{Float64}(undef, [player.action_space for player in players])
@@ -129,7 +130,8 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
         push!(player.history, [observations[Block(ii)], player.belief])
         player.belief = new_beliefs[Block(ii)]
 
-        if player.player_type == SDGiBS
+        println("player type: ", player.player_type)
+        if player.player_type == player_type.type_SDGiBS
             all_actions[Block(ii)] .= handle_SDGiBS_action(players, env, ii)
         else
             all_actions[Block(ii)] .= action_selector(player, observations[Block(ii)])
