@@ -31,11 +31,12 @@ function active_surveillance_demo()
             noise=Vector{Float64}([rand(-motion_nosie:motion_noise), rand(-motion_nosie:motion_noise)]))...)
     end
 	
-	coords1 = [x[Block(1)][1:2] for x in trajectory]
-	coords2 = [x[Block(2)][1:2] for x in trajectory]
+	coords1 = vcat([x[Block(1)][1:2] for x in trajectory]...)
+	coords2 = vcat([x[Block(2)][1:2] for x in trajectory]...)
 
+    # TODO: something to fix here rip
 	fig = Figure()
-	ax = Axis(fig[1, 1], aspect = DataAspect(), xlabel = "x", ylabel = "y")
+	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
 	lines!(ax, coords1, color = :blue)
 	lines!(ax, coords2, color = :red)
 	fig
@@ -61,18 +62,27 @@ function init(; L::Int = 1)
 		return new_states
 	end
 
-    # TODO: unused??
 	function measurement_noise_scaler(state::Vector{Float64}; surveillance_radius::Int = 10)
 		# Only take x and y coords from state vector
 		n = norm(state[1:2], 2) - surveillance_radius
 		n = max(1, n) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
 		n = min(5, n) # make sure noise multiplier doesn't get too large
 
-		return Matrix(n * I, 2, 2)
+        v = .25 * state[4]^2 # velocity scaled noise
+        t = .01 * 360 # noise for theta is 1% of a circle
+
+        noise = 
+			[
+			n 0 0 0; 
+			0 n 0 0; 
+			0 0 t 0; 
+			0 0 0 v
+			]
+
+		return noise
 	end
 
 	function observation_function(; states::BlockVector{Float64}, N::Function = measurement_noise_scaler)
-
 		measurement_noise = BlockVector{Float64}(undef, length(states))
 		for i in eachindex(blocks(measurement_noise))
 			measurement_noise[Block(i)] .= N(states[Block(i)]) * rand(Float64, 2)
@@ -95,9 +105,9 @@ function init(; L::Int = 1)
 		observation_function = observation_function,
 		num_agents = 2,
 		state_dim = 4,
-        nosie_dim = 2,
+        noise_dim = 2,
 		initial_state = initial_state,
-		final_time = -1)
+		final_time = 10)
 
 	# cov matrix 2 0 ; 0 2
 	initial_beliefs = BlockVector{Float64}(undef, [8, 8])
