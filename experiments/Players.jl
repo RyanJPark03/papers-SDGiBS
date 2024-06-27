@@ -77,8 +77,8 @@ function handle_SDGiBS_action(players::Array{player}, env::base_environment,
 	current_player_index::Int)
     # probably no π
 	(b̄, ū, π) = SDGiBS_solve_action(players, env)
-	players[current_player_index].predicted_belief = b̄[Block(current_player_index)]
-	players[current_player_index].predicted_control = ū[Block(current_player_index)]
+	players[current_player_index].predicted_belief = b̄
+	players[current_player_index].predicted_control = ū
 	players[current_player_index].feedback_law = π
     return players[current_player_index].predicted_control[env.time]
 end
