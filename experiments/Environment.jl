@@ -35,7 +35,7 @@ function init_base_environment(;
         observation_noise_dim,
 		initial_state,
 		initial_state,
-		0,
+		1,
 		final_time)
 end
 
