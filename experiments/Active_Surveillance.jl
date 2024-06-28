@@ -6,7 +6,7 @@ u⁽ⁱ⁾ = [u_acceleration⁽ⁱ⁾, u_steer⁽ⁱ⁾]
 
 using BlockArrays
 using LinearAlgebra
-using GLMakie
+# using GLMakie
 
 include("Environment.jl")
 include("Players.jl")
@@ -22,31 +22,36 @@ function active_surveillance_demo()
 	demo = init(; L = 1)
     trajectory = []
     push!(trajectory, demo.env.current_state)
+	motion_noise = 1.0
 
     for tt in 1:demo.env.final_time
         # time_step could return a block vector already, not entirely sure
-		observations = demo.env.observation_function(;states=demo.env.current_state)
+		m = BlockVector(vcat([rand(-motion_noise:motion_noise, demo.env.observation_noise_dim) for _ in 1:demo.env.num_agents]...),
+						[demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
+		observations = demo.env.observation_function(;states=demo.env.current_state,
+				m = m)
         # controls = BlockVector(time_step_all(demo.players, demo.env, observations(demo.env)))
 		controls = BlockVector(time_step_all(demo.players, demo.env, observations))
         push!(trajectory, unroll(demo.env, controls, 1;
         # TODO: noise should be normally distributed
-            noise=Vector{Float64}([rand(-motion_nosie:motion_noise), rand(-motion_nosie:motion_noise)]))...)
+            noise=Vector{Float64}([rand(-motion_noise:motion_noise), rand(-motion_noise:motion_noise)]))...)
     end
 	
 	coords1 = vcat([x[Block(1)][1:2] for x in trajectory]...)
 	coords2 = vcat([x[Block(2)][1:2] for x in trajectory]...)
 
     # TODO: something to fix here rip
-	fig = Figure()
-	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
-	lines!(ax, coords1, color = :blue)
-	lines!(ax, coords2, color = :red)
-	fig
+	# fig = Figure()
+	# ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
+	# lines!(ax, coords1, color = :blue)
+	# lines!(ax, coords2, color = :red)
+	# fig
 end
 
 function init(; L::Int = 1)
 
-	function state_dynamics(states::BlockVector{Float64}, u::BlockVector{Float64}, m::Vector{Float64}; τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u))
+	function state_dynamics(states::BlockVector{Float64}, u::BlockVector{Float64}, m::BlockVector{Float64};
+			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u))
 		new_state = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
 		for i in eachindex(blocks(states))
 			x, y, θ, v = states[Block(i)]
@@ -55,12 +60,11 @@ function init(; L::Int = 1)
 			# TODO: Find a good value for L
 			ẋ = [v * cos(θ), v * sin(θ), accel, v / (L * tan(steer))]
 
-			# mₖ = Vector{Float64}([rand(-motion_nosie:motion_noise), rand(-motion_nosie:motion_noise)])
-            mₖ = m
-			# M scales motion noise mₖ according to size of u[i]
+			mₖ = m[Block(i)]
+
+			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
 			new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * mₖ
 		end
-
 		return new_state
 	end
 
@@ -84,10 +88,11 @@ function init(; L::Int = 1)
 		return noise
 	end
 
-	function observation_function(; states::BlockVector{Float64}, N::Function = measurement_noise_scaler)
+	function observation_function(; states::BlockVector{Float64}, m::BlockVector{Float64}, N::Function = measurement_noise_scaler)
 		measurement_noise = BlockVector{Float64}(undef, [4 for ii in eachindex(blocks(states))])
+
 		for i in eachindex(blocks(measurement_noise))
-			measurement_noise[Block(i)] .= N(states[Block(i)]) * rand(Float64, 4)
+			measurement_noise[Block(i)] .= N(states[Block(i)]) * m[Block(i)]
 		end
 
 		observations = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
@@ -103,14 +108,14 @@ function init(; L::Int = 1)
 	initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 1.0]
 
 	env = init_base_environment(;
-		state_dynamics = state_dynamics,
-		observation_function = observation_function,
-		num_agents = 2,
-		state_dim = 4,
-        dynamics_noise_dim = 4,
-		observation_noise_dim = 4,
-		initial_state = initial_state,
-		final_time = 10)
+			state_dynamics = state_dynamics,
+			observation_function = observation_function,
+			num_agents = 2,
+			state_dim = 4,
+		    dynamics_noise_dim = 4,
+			observation_noise_dim = 4,
+			initial_state = initial_state,
+			final_time = 10)
 
 	# cov matrix 2 0 ; 0 2
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
@@ -127,9 +132,10 @@ function init(; L::Int = 1)
 		R = Matrix(0.1 * I, 2, 2)
 		return u[Block(1)]' * R * u[Block(1)]
 	end
-	function cₗ¹(β::BlockVector{Float64}, u::BlockVector{Float64})
+	function cₗ¹(β::BlockVector{Float64}, u::BlockVector{Float64}) # TODO: Wrong,  
 		return determinant(reshape(β[Block(2)][5:8], (2, 2)))
 	end
+
 	α₁ = 1.0
 	α₂ = 1.0
 	vₖ_des = 1.0
@@ -143,6 +149,7 @@ function init(; L::Int = 1)
 		R = Matrix(0.1 * I, 2, 2)
 		return u[Block(2)]' * R * u[Block(2)] + α₁(β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
 	end
+
 	function cₗ²(β::BlockVector{Float64}, u::BlockVector{Float64})
 		return α₁ * (β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
 	end
@@ -152,10 +159,12 @@ function init(; L::Int = 1)
 	players = [init_player(;
 		player_type = type_SDGiBS,
 		player_id = i,
+		# Block of a Block vector is a vector
 		belief = initial_beliefs[Block(i)],
 		cost = costs[i],
 		final_cost = final_costs[i],
 		action_space = 2,
+		observation_space = 4,
 		default_action = [0.0, 0.0],
 		time = 20) for i in 1:2]
 

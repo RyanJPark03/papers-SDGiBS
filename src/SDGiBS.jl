@@ -1,66 +1,85 @@
 module SDGiBS
 
 using BlockArrays
-using Symbolics
+using LinearAlgebra
+using Enzyme
+
+Enzyme.API.printunnecessary!(false)
 
 export belief_update
-function belief_update(env, players::Array, observations::BlockVector{Float64})
-    println("size of belief: ", size(players[1].belief))
+function belief_update(env, players::Array, observations)
+    num_players = length(players)
     β = BlockVector(vcat([player.belief for player in players]...), [length(player.belief) for player in players])
+    # β = vcat([player.belief for player in players]...)
 
-    mean_lengths = [env.state_dim for _ in eachindex(players)]
-    cov_lengths = [Int(sqrt(length(β[Block(1)]) - env.state_dim)) for _ in eachindex(players)]
+    mean_lengths = [env.state_dim for _ in 1:num_players]
+    cov_length = Int(sqrt(Int(length(β) // num_players - env.state_dim)))
+    cov_lengths = [cov_length for _ in 1:num_players]
 
-    x̂ₖ = BlockVector(vcat([β[Block(ii)][1:env.state_dim] for ii in eachindex(players)]...), mean_lengths)
-    Σₖ = BlockArray(vcat([reshape(β[Block(ii)][env.state_dim+1:end],
-        tuple(cov_lengths...)) for ii in eachindex(players)]...), cov_lengths, [cov_lengths[1]])
+    x̂ₖ = BlockVector(vcat([β[Block(ii)][1:env.state_dim] for ii in 1:num_players]...), mean_lengths)
+    # x̂ₖ = vcat([player.belief[1:env.state_dim] for player in players]...)
+    # x̂ₖ_vec = Vector(x̂ₖ)
+    Σₖ = BlockArray{Float64}(undef, cov_lengths, cov_lengths)
+    for ii in eachindex(players)
+        for jj in eachindex(players)
+            if ii == jj
+                Σₖ[Block(ii, jj)] .= reshape(β[Block(ii)][env.state_dim+1:end], tuple(cov_lengths...))
+            else
+                Σₖ[Block(ii, jj)] .= zeros((cov_length, cov_length))
+            end
+        end
+    end
     # TODO: not entirely sure what design choice I want with env.time + 1 here (depending on how env.time is init)
-    uₖ = BlockVector(vcat([player.predicted_control[env.time+1] for player in players]...), 
+    uₖ = BlockVector(vcat([player.predicted_control[env.time] for player in players]...), 
                     [player.action_space for player in players])
 
-    # TODO: for some reason m̃[1:env.noise_dim] is not working, env.noise_dim not found...
-    @variables x̃[1:env.state_dim], ũ[1:sum([player.action_space for player in players])]
-    @variables ñ[1:env.observation_noise_dim], m̃[1:env.dynamics_noise_dim]
-    # @variables x̃[1:env.state_dim], ũ[1:sum([player.action_space for player in players])], m̃[1:2]
-    x = Symbolics.scalarize(x̃)
-    u = Symbolics.scalarize(ũ)
-    m = Symbolics.scalarize(m̃)
-    n = Symbolics.scalarize(ñ)
-
-    f = (x, u, m) -> env.state_dynamics(x, u, m)
-    h = (x, n) -> env.observation_function(;state=x, noise=n)
-
-    x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, zeros(env.dynamics_noise_dim))
-
-    # TODO: noise should be normally distributed
-    A = Symbolics.build_function(Symbolics.gradient(f, x), expression = Val{false})[1]
-    M = Symbolics.build_function(Symbolics.gradient(f, m), expression = Val{false})[1]
-    H = Symbolics.build_function(Symbolics.gradient(h, x), expression = Val{false})[1]
-    N = Symbolics.build_function(Symbolics.gradient(h, n), expression = Val{false})[1]
+    f = (x) -> env.state_dynamics(
+        BlockVector(x[Block(1)], mean_lengths),
+        BlockVector(x[Block(2)], [player.action_space for player in players]),
+        BlockArray(x[Block(3)], [env.dynamics_noise_dim for _ in 1:num_players]))
+    h = (x) -> env.observation_function(
+        BlockVector(x[1], mean_lengths),
+        BlockVector(x[2], [env.observation_noise_dim for _ in 1:num_players]))
     
-    Aₖ = A(x̂ₖ, uₖ, zeros(env.dynamics_noise_dim))
-    Mₖ = M(x̂ₖ, uₖ, zeros(env.dynamics_noise_dim))
-    Hₖ = H(x̂ₖ₊₁, zeros(env.observation_noise_dim))
-    Nₖ = N(x̂ₖ₊₁, zeros(env.observation_noise_dim))
+    m = BlockVector([0.0 for _ in 1:env.dynamics_noise_dim * num_players],
+                    [env.dynamics_noise_dim for _ in 1:num_players])
 
-    println(typeof(Aₖ))
-    println(size(Aₖ))
-    println(Aₖ)
-    println(typeof(Σₖ))
-    println(size(Σₖ))
-    println(Σₖ)
+    # f_jacobian = Enzyme.jacobian(Forward, f, [x̂ₖ, uₖ, m])
+    f_jacobian = Enzyme.jacobian(Forward, f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]))
+    Aₖ = f_jacobian[:, 1:length(x̂ₖ)]
+    Mₖ = f_jacobian[:, length(x̂ₖ) + length(uₖ)+ 1:end]
+
+    # WORKING UNTIL HERE
+    println("working 0")
+
+    n = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players],
+                    [env.observation_noise_dim for _ in 1:num_players])
+    println("working 0.1")
+    h_jacobian = Enzyme.jacobian(Forward, h, BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)]))
+    println("working 0.2")
+    Hₖ = h_jacobian[:, 1:length(x̂ₖ)]
+    println("working 0.3")
+    Nₖ = h_jacobian[:, length(x̂ₖ) + 1:end]
+
+    println("working 1")
 
     Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
     Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
 
-    x̂ₖ₊₁ = x̂ₖ₊₁ + Kₖ * (observations - h(x̂ₖ₊₁, [0, 0]))
+    x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, u, m) + Kₖ * (observations - h(x̂ₖ₊₁, [0.0 for _ in 1:env.observation_noise_dim * num_players]))
     Σₖ₊₁ = (I - Kₖ * Hₖ) * Γₖ₊₁
+
+    println("working 2")
+    @assert typeof(x̂ₖ₊₁) == Vector{Float64}
 
     x̂_temp = BlockVector(x̂ₖ₊₁, state_lengths)
     Σ_temp = BlockVector(Σₖ₊₁, cov_lengths)
 
     β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(env.players)]...), 
                     [state_lengths[i] + cov_lengths[i] for i in eachindex(env.players)])
+
+    println("working 3")
+    # β = vcat([vcat(x̂ₖ₊₁, vec(Σₖ₊₁)) for ii in eachindex(players)]...)
 	return β
 end
 
@@ -92,15 +111,15 @@ function SDGiBS_solve_action(players::Array, env)
     ϵ = 1e-5
     Q_new = cost(players, b̄, ū)
 
-    # Derivative variables
-    @variables b̃[1:sum([length(player.history[env.time][2]) for player in players])]
-    b = Symbolics.scalarize(b̃)
+    # # Derivative variables
+    # @variables b̃[1:sum([length(player.history[env.time][2]) for player in players])]
+    # b = Symbolics.scalarize(b̃)
 
-    # Vaiables to find Wₖ
-    @variables m̃[1:env.noise_dim]
-    m = Symbolics.scalarize(m̃)
-    f = (x, u, m) -> env.state_dynamics(x, u, m)
-    Mₖ = Symbolics.gradient(f, m)
+    # # Vaiables to find Wₖ
+    # @variables m̃[1:env.noise_dim]
+    # m = Symbolics.scalarize(m̃)
+    # f = (x, u, m) -> env.state_dynamics(x, u, m)
+    # Mₖ = Symbolics.gradient(f, m)
     
     while norm(Q_new - Q_old, 2) > ϵ
         # Bakcwards Pass
@@ -133,38 +152,6 @@ end
 
 
 function calculate_belief_variables(env, x̂ₖ, ûₖ)
-    #TODO: I'm 100% sure you could make these variables static, no need to re-instantiate...
-    @variables x̃[1:env.state_dim], ũ[1:sum([player.action_space for player in players])], m̃[1:env.noise_dim]
-    x = Symbolics.scalarize(x̃)
-    u = Symbolics.scalarize(ũ)
-    m = Symbolics.scalarize(m̃)
-
-    f = (x, u, m) -> env.state_dynamics(x, u, m)
-    h = (x, n) -> env.observation_function(;state=x, noise=n)
-
-    x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, [0, 0])
-
-    # TODO: noise should be normally distributed
-
-    #TODO: check if this is correct
-    Aₖ = substitute.(Symbolics.gradient(f, x), (Dict(x => x̂ₖ, u => uₖ, m => [0, 0]),))
-    Mₖ = substitute.(Symbolics.gradient(f, m), (Dict(x => x̂ₖ, u => uₖ, m => [0, 0]),))
-    Hₖ = substitute.(Symbolics.gradient(h, x), (Dict(x => x̂ₖ₊₁, n => [0, 0]),))
-    Nₖ = substitute.(Symbolics.gradient(h, n), (Dict(x => x̂ₖ₊₁, n => [0, 0]),))
-
-    Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
-    Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
-
-    x̂ₖ₊₁ = x̂ₖ₊₁ + Kₖ * (observations - h(x̂ₖ₊₁, [0, 0]))
-    Σₖ₊₁ = (I - Kₖ * Hₖ) * Γₖ₊₁
-
-    x̂_temp = BlockVector(x̂ₖ₊₁, state_lengths)
-    Σ_temp = BlockVector(Σₖ₊₁, cov_lengths)
-
-    β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(env.players)]...), 
-                    [state_lengths[i] + cov_lengths[i] for i in eachindex(env.players)])
-
-    return β, x̂ₖ₊₁, Σₖ₊₁, Aₖ, Mₖ, Hₖ, Nₖ, Γₖ₊₁, Kₖ 
 end
 
 end

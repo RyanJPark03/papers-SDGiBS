@@ -5,4 +5,6 @@ version = "0.1.0"
 
 [deps]
 BlockArrays = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"

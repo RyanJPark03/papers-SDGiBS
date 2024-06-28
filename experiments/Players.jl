@@ -21,6 +21,7 @@ struct player{}
 	belief_updater::Function
 	action_selector::Function
 	action_space::Int
+    observation_space::Int
 	# SDGiBS specific
 	predicted_belief::Vector{Vector{Float64}}
 	predicted_control::Vector{Vector{Float64}}
@@ -35,6 +36,7 @@ function init_player(;
 	cost::Function,
 	final_cost::Function,
 	action_space::Int = -1,
+    observation_space::Int = -1,
 	default_action::Vector{Float64} = nothing,
 	time::Int = 1)
 
@@ -70,7 +72,7 @@ function init_player(;
 	end
 
 	player(player_type, player_id, belief, cost, final_cost, [], belief_updater, action_selector, action_space,
-		predicted_belief, predicted_control, feedback_law)
+        observation_space, predicted_belief, predicted_control, feedback_law)
 end
 
 function handle_SDGiBS_action(players::Array{player}, env::base_environment,
@@ -110,7 +112,7 @@ end
 # end
 
 export time_step_all
-function time_step_all(players::Array{player}, env::base_environment, observations::BlockVector{Float64})
+function time_step_all(players::Array{player}, env::base_environment, observations)
     # Observation, belief, then action, lets say we start with prior -> observation -> belief ->action
     # We count the first action as time 1
 
@@ -125,18 +127,28 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
 
     # Do actions
     all_actions = BlockVector{Float64}(undef, [player.action_space for player in players])
+    # total_action_space = sum([player.action_space for player in players])
+    # all_actions = [0.0 for _ in 1 : total_action_space]
     for ii in eachindex(players)
         player = players[ii]
         push!(player.history, [observations[Block(ii)], player.belief])
+        # push!(player.history, [observations[player.observation_space * (ii - 1) + 1 : player.observation_space * ii], player.belief])
         player.belief = new_beliefs[Block(ii)]
+        # total_prev_belief_space = sum([player.observation_space for player in players[1:ii]])
+        # player.belief = new_beliefs[total_prev_belief_space + 1 : total_prev_belief_space + player.observation_space]
 
-        println("player type: ", player.player_type)
+        # println("player type: ", player.player_type)
+        # total_prev_action_space = sum([player.action_space for player in players[1:ii]])
         if player.player_type == player_type.type_SDGiBS
             all_actions[Block(ii)] .= handle_SDGiBS_action(players, env, ii)
+            # all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space] = handle_SDGiBS_action(players, env, ii)
+            # all_actions
         else
             all_actions[Block(ii)] .= action_selector(player, observations[Block(ii)])
+            # all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space] = player.action_selector(player, observations[total_prev_belief_space + 1 : total_prev_belief_space + player.observation_space])
         end
         push!(player.history[end], all_actions[Block(ii)])
+        # push!(player.history[end], all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space])
     end
 
     return all_actions

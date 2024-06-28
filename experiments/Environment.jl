@@ -7,8 +7,8 @@ struct base_environment{}
 	state_dim::Int
     dynamics_noise_dim::Int
     observation_noise_dim::Int
-	initial_state::BlockVector{Float64}
-	current_state::BlockVector{Float64}
+	initial_state
+	current_state
 	time::Int
 	final_time::Int
 end
@@ -21,7 +21,7 @@ function init_base_environment(;
 	state_dim::Int,
     dynamics_noise_dim::Int,
     observation_noise_dim::Int,
-	initial_state::BlockVector{Float64},
+	initial_state,
 	final_time::Int = -1)
 
 	#TODO: assert that all dimensions line up correctly, potentially init some stuff
@@ -39,7 +39,7 @@ function init_base_environment(;
 		final_time)
 end
 
-function unroll(env::base_environment, actions::Vector{BlockVector{Float64}}, time_steps::Int;
+function unroll(env::base_environment, actions, time_steps::Int;
     noise::Vector{Float64}=nothing)
 	if time_steps + env.time > env.final_time
 		println("Time steps exceed final time")
