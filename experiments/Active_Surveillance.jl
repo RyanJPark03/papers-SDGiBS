@@ -79,8 +79,8 @@ function init(; L::Int = 1)
 			[
 			n 0 0 0; 
 			0 n 0 0; 
-			0 0 t 0; 
-			0 0 0 v
+			0 0 v 0; 
+			0 0 0 t
 			]
 
 		return noise
