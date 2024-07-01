@@ -54,7 +54,7 @@ function init_player(;
 	action_selector::Function = () -> true
 
 	predicted_belief = [belief for _ in 1:time+1]
-	predicted_control = [zeros(action_space) for _ in 1:time+1]
+	predicted_control = [copy(default_action) for _ in 1:time+1]
 	feedback_law = nothing
 
 	if player_type == no_change
@@ -123,7 +123,6 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
 
     # Get updated beliefs
     new_beliefs = SDGiBS.belief_update(env, players, observations)
-    println("hi")
 
     # Do actions
     all_actions = BlockVector{Float64}(undef, [player.action_space for player in players])
@@ -133,13 +132,12 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
         player = players[ii]
         push!(player.history, [observations[Block(ii)], player.belief])
         # push!(player.history, [observations[player.observation_space * (ii - 1) + 1 : player.observation_space * ii], player.belief])
-        player.belief = new_beliefs[Block(ii)]
+        player.belief .= new_beliefs[Block(ii)]
         # total_prev_belief_space = sum([player.observation_space for player in players[1:ii]])
         # player.belief = new_beliefs[total_prev_belief_space + 1 : total_prev_belief_space + player.observation_space]
 
-        # println("player type: ", player.player_type)
         # total_prev_action_space = sum([player.action_space for player in players[1:ii]])
-        if player.player_type == player_type.type_SDGiBS
+        if player.player_type == type_SDGiBS
             all_actions[Block(ii)] .= handle_SDGiBS_action(players, env, ii)
             # all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space] = handle_SDGiBS_action(players, env, ii)
             # all_actions

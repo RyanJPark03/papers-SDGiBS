@@ -51,14 +51,15 @@ end
 function init(; L::Int = 1)
 
 	function state_dynamics(states::BlockVector{Float64}, u::BlockVector{Float64}, m::BlockVector{Float64};
-			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u))
+			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0)
 		new_state = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
 		for i in eachindex(blocks(states))
 			x, y, θ, v = states[Block(i)]
 			accel, steer = u[Block(i)]
 
 			# TODO: Find a good value for L
-			ẋ = [v * cos(θ), v * sin(θ), accel, v / (L * tan(steer))]
+			# ẋ = [v * cos(θ), v * sin(θ), accel, v / (L * tan(steer))]
+			ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
 
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
 			new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
@@ -158,7 +159,7 @@ function init(; L::Int = 1)
 		final_cost = final_costs[i],
 		action_space = 2,
 		observation_space = 4,
-		default_action = [0.0, 0.0],
+		default_action = [0.0, 0.5],# accel, steer
 		time = 20) for i in 1:2]
 
 	return surveillance_demo(env, players)

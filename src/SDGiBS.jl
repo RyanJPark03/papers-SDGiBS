@@ -7,6 +7,7 @@ using Enzyme
 Enzyme.API.printunnecessary!(false)
 Enzyme.API.runtimeActivity!(true) 
 Enzyme.API.strictAliasing!(false)
+Enzyme.API.printactivity!(false)
 
 export belief_update
 function belief_update(env, players::Array, observations)
@@ -47,8 +48,6 @@ function belief_update(env, players::Array, observations)
         m = BlockVector(x[Block(2)], [env.observation_noise_dim for _ in 1:num_players]))
 
 
-    # f_jacobian = Enzyme.jacobian(Forward, f, [x̂ₖ, uₖ, m])
-    # TODO: there are NaNs and Infs in the jacoban
     f_jacobian = Enzyme.jacobian(Forward, f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]))
     Aₖ = f_jacobian[:, 1:length(x̂ₖ)]
     Mₖ = f_jacobian[:, length(x̂ₖ) + length(uₖ)+ 1:end]
@@ -56,43 +55,27 @@ function belief_update(env, players::Array, observations)
     n = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players],
                     [env.observation_noise_dim for _ in 1:num_players])
 
-    # asdf = (x) -> x
-
-    temp = BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)])
-    # h_jacobian = Enzyme.jacobian(Forward, h, [1 for _ in 1 : length(x̂ₖ) + length(n)])
-    h_jacobian = Enzyme.jacobian(Forward, h, temp)
-    # h_jacobian = Enzyme.jacobian(Forward, env.observation_function, x̂ₖ, n)
-    # h_jacobian = Enzyme.autodiff(Forward, env.observation_function, x̂ₖ, n)
-
-
+    h_jacobian = Enzyme.jacobian(Forward, h, BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)]))
 
     Hₖ = h_jacobian[:, 1:length(x̂ₖ)]
     Nₖ = h_jacobian[:, length(x̂ₖ) + 1:end]
 
-    println("working 1")
-    display(h_jacobian)
-    println("now f ")
-    # println(f_jacobian)
-    display(Aₖ)
-    display(Mₖ)
-
     Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
     Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
 
-    x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, u, m) + Kₖ * (observations - h(x̂ₖ₊₁, [0.0 for _ in 1:env.observation_noise_dim * num_players]))
+    noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
+    zeroed_env_noise = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players], [env.observation_noise_dim for _ in eachindex(players)])
+    x̂ₖ₊₁ = noiseless_x̂ₖ₊₁ + Kₖ * (observations - env.observation_function(states = noiseless_x̂ₖ₊₁, m = zeroed_env_noise))
     Σₖ₊₁ = (I - Kₖ * Hₖ) * Γₖ₊₁
 
-    println("working 2")
-    @assert typeof(x̂ₖ₊₁) == Vector{Float64}
+    x̂_temp = BlockVector(x̂ₖ₊₁, mean_lengths)
+    Σ_block = BlockArray(Σₖ₊₁, cov_lengths, cov_lengths)
+    temp = vcat([Σ_block[Block(ii, ii)] for ii in eachindex(players)]...)
+    Σ_temp = BlockVector(vec(temp), [cov_length^2 for _ in eachindex(players)])
 
-    x̂_temp = BlockVector(x̂ₖ₊₁, state_lengths)
-    Σ_temp = BlockVector(Σₖ₊₁, cov_lengths)
+    β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(players)]...), 
+                    [mean_lengths[i] + cov_lengths[i]^2 for i in eachindex(players)])
 
-    β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(env.players)]...), 
-                    [state_lengths[i] + cov_lengths[i] for i in eachindex(env.players)])
-
-    println("working 3")
-    # β = vcat([vcat(x̂ₖ₊₁, vec(Σₖ₊₁)) for ii in eachindex(players)]...)
 	return β
 end
 
