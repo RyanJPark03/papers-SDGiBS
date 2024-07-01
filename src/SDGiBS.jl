@@ -5,6 +5,8 @@ using LinearAlgebra
 using Enzyme
 
 Enzyme.API.printunnecessary!(false)
+Enzyme.API.runtimeActivity!(true) 
+Enzyme.API.strictAliasing!(false)
 
 export belief_update
 function belief_update(env, players::Array, observations)
@@ -32,36 +34,47 @@ function belief_update(env, players::Array, observations)
     # TODO: not entirely sure what design choice I want with env.time + 1 here (depending on how env.time is init)
     uₖ = BlockVector(vcat([player.predicted_control[env.time] for player in players]...), 
                     [player.action_space for player in players])
+    m = BlockVector([0.0 for _ in 1:env.dynamics_noise_dim * num_players],
+                    [env.dynamics_noise_dim for _ in 1:num_players])
 
     f = (x) -> env.state_dynamics(
         BlockVector(x[Block(1)], mean_lengths),
         BlockVector(x[Block(2)], [player.action_space for player in players]),
         BlockArray(x[Block(3)], [env.dynamics_noise_dim for _ in 1:num_players]))
+        
     h = (x) -> env.observation_function(
-        BlockVector(x[1], mean_lengths),
-        BlockVector(x[2], [env.observation_noise_dim for _ in 1:num_players]))
-    
-    m = BlockVector([0.0 for _ in 1:env.dynamics_noise_dim * num_players],
-                    [env.dynamics_noise_dim for _ in 1:num_players])
+        states = BlockVector(x[Block(1)], mean_lengths),
+        m = BlockVector(x[Block(2)], [env.observation_noise_dim for _ in 1:num_players]))
+
 
     # f_jacobian = Enzyme.jacobian(Forward, f, [x̂ₖ, uₖ, m])
+    # TODO: there are NaNs and Infs in the jacoban
     f_jacobian = Enzyme.jacobian(Forward, f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]))
     Aₖ = f_jacobian[:, 1:length(x̂ₖ)]
     Mₖ = f_jacobian[:, length(x̂ₖ) + length(uₖ)+ 1:end]
 
-    # WORKING UNTIL HERE
-    println("working 0")
-
     n = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players],
                     [env.observation_noise_dim for _ in 1:num_players])
-    println("working 0.1")
-    h_jacobian = Enzyme.jacobian(Forward, h, BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)]))
-    println("working 0.2")
+
+    # asdf = (x) -> x
+
+    temp = BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)])
+    # h_jacobian = Enzyme.jacobian(Forward, h, [1 for _ in 1 : length(x̂ₖ) + length(n)])
+    h_jacobian = Enzyme.jacobian(Forward, h, temp)
+    # h_jacobian = Enzyme.jacobian(Forward, env.observation_function, x̂ₖ, n)
+    # h_jacobian = Enzyme.autodiff(Forward, env.observation_function, x̂ₖ, n)
+
+
+
     Hₖ = h_jacobian[:, 1:length(x̂ₖ)]
-    println("working 0.3")
     Nₖ = h_jacobian[:, length(x̂ₖ) + 1:end]
 
     println("working 1")
+    display(h_jacobian)
+    println("now f ")
+    # println(f_jacobian)
+    display(Aₖ)
+    display(Mₖ)
 
     Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
     Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)

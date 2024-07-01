@@ -60,10 +60,8 @@ function init(; L::Int = 1)
 			# TODO: Find a good value for L
 			ẋ = [v * cos(θ), v * sin(θ), accel, v / (L * tan(steer))]
 
-			mₖ = m[Block(i)]
-
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
-			new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * mₖ
+			new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
 		end
 		return new_state
 	end
@@ -89,15 +87,10 @@ function init(; L::Int = 1)
 	end
 
 	function observation_function(; states::BlockVector{Float64}, m::BlockVector{Float64}, N::Function = measurement_noise_scaler)
-		measurement_noise = BlockVector{Float64}(undef, [4 for ii in eachindex(blocks(states))])
-
-		for i in eachindex(blocks(measurement_noise))
-			measurement_noise[Block(i)] .= N(states[Block(i)]) * m[Block(i)]
-		end
-
 		observations = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
+
 		for i in eachindex(blocks(states))
-			observations[Block(i)] .= states[Block(i)] + measurement_noise[Block(i)]
+			observations[Block(i)] .= states[Block(i)] + N(states[Block(i)]) * m[Block(i)]
 		end
 
 		return observations
