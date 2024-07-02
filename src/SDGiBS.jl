@@ -3,86 +3,129 @@ module SDGiBS
 using BlockArrays
 using LinearAlgebra
 using Enzyme
+using Distributions
 
-Enzyme.API.printunnecessary!(false)
-Enzyme.API.runtimeActivity!(true) 
+Enzyme.API.runtimeActivity!(true)
 Enzyme.API.strictAliasing!(false)
-Enzyme.API.printactivity!(false)
+
 
 export belief_update
 function belief_update(env, players::Array, observations)
-    
-
 	return calculate_belief_variables(env, players, observations, env.time)[1]
 end
 
 export SDGiBS_solve_action
 function SDGiBS_solve_action(players::Array, env) 
-    error("SDGiBS not implemented yet")
-    bₒ = BlockVector([player.history[env.time][2] for player in players],
-                    [length(player.history[env.time][2]) for player in players])
+    Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
+        for ii in eachindex(players)
+            Σₒ[Block(ii, ii)] .= reshape(players[ii].history[env.time][2][env.state_dim + 1:end], (env.state_dim, env.state_dim))
+        end
     
-    ū = BlockVector(vcat([player.predicted_control[env.time:end] for player in players]...),
-                    [length(player.predicted_control[env.time:end]) for player in players])
+    # ū = BlockVector(vcat([player.predicted_control[env.time:end] for player in players]...),
+    #                 [length(player.predicted_control[env.time:end]) for player in players])
+    ū = BlockArray(hcat([vcat([player.predicted_control[tt] for player in players]...) for tt in env.time:env.final_time - 1]...),
+                    [player.action_space for player in players], [1 for _ in env.time:env.final_time - 1])
 
-    cₖ = BlockVector([player.cost for player in players],
-                    [1 for _ in eachindex(players)])
+    cₖ = (x) -> [player.cost(BlockVector(x[Block(1)], [env.state_dim for _ in players])
+        , BlockVector(x[Block(2)], [p.action_space for p in players])) for player in players]
+    cₗ = (x) -> [player.final_cost(x) for player in players]
+    
 
-    cₗ = BlockVector([player.final_cost for player in players],
-                    [1 for _ in eachindex(players)])
-	
-    b̄ = []
-    push!(b̄, bₒ)
-    normal_distr = MvNormal([0, 0], Matrix(1.0 * I, 2, 2))
-    for tt in 1:env.final_time - env.time + 1 # TODO: think abt this one
-        # roll out b̄
-        push!(b̄, env.state_dynamics(b̄[end], [ū[i][tt] for i in eachindex(players)], rand(2, normal_distr)))
-    end
+
+    b̄ = simulate(env, players, ū)[1]
+
+    @assert length(b̄) == size(ū)[2] + 1
+    @assert length(b̄) == env.final_time - env.time + 1
 
     # Iteration variables
     Q_old = [Inf for _ in eachindex(players)]
     ϵ = 1e-5
     Q_new = cost(players, b̄, ū)
 
-    # # Derivative variables
-    # @variables b̃[1:sum([length(player.history[env.time][2]) for player in players])]
-    # b = Symbolics.scalarize(b̃)
-
-    # # Vaiables to find Wₖ
-    # @variables m̃[1:env.noise_dim]
-    # m = Symbolics.scalarize(m̃)
-    # f = (x, u, m) -> env.state_dynamics(x, u, m)
-    # Mₖ = Symbolics.gradient(f, m)
+    π = []
     
     while norm(Q_new - Q_old, 2) > ϵ
         # Bakcwards Pass
-        # V
-        # V_b
-        # V_bb    
+        # β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt)
+
+        # u_b_vec = BlockVector(vcat(b̄[end], ū[end]), [length(b̄[end]), length(ū[end])])
+        # u_b_vec = BlockVector(b̄[end], [length(b̄[end])])
+        V = cₗ(b̄[end])
+        V_b_1 = Enzyme.jacobian(Forward, players[1].final_cost, b̄[end])
+        V_b_2 = Enzyme.jacobian(Forward, players[2].final_cost, b̄[end])
+        V_b = vcat(V_b_1, V_b_2)
+        println("---------------------------------")
+        # V_bb = Enzyme.jacobian((x) -> Enzyme.jacobian(cₗ, x), b̄[end])
+        error("holy moly it worked")
+        for tt in env.final_time:-1:env.time
+        end
+        
 
     end
 
-
+    error("skipped while loop")
 	return [1, 1]
 end
 
+function simulate(env, players, ū; noise = false)
+    b̄ = [BlockVector{Float64}(undef, [env.state_dim + env.state_dim^2 for _ in eachindex(players)]) for _ in 1:env.final_time - env.time + 1]
+    sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in 1:env.final_time - env.time + 1]
+
+    belief_length = length(players[1].history[end][2])
+    b̄[1] = BlockVector(vcat([player.history[env.time][2] for player in players]...),
+        [belief_length for player in players])
+    sts[1] .= env.current_state
+
+    dynamics_noise = BlockVector(zeros(env.dynamics_noise_dim * length(players)), [env.dynamics_noise_dim for _ in 1:length(players)])
+    observation_noise = BlockVector(zeros(env.observation_noise_dim * length(players)), [env.observation_noise_dim for _ in 1:length(players)])
+  
+    for tt in 1:env.final_time - env.time
+        # belief_st = get_prefixes(b̄[tt], env.state_dim)
+        actual_time = tt + env.time - 1
+        action = BlockVector(vec(vcat([ū[Block(i, actual_time)] for i in eachindex(players)]...)),
+            [player.action_space for player in players])
+        
+        if noise
+            dynamics_noise .= [rand(Distributions.Normal()) for _ in 1 : env.dynamics_noise_dim * length(players)]
+            observation_noise .= [rand(Distributions.Normal()) for _ in 1 : env.observation_noise_dim * length(players)]
+        end
+        sts[tt + 1] .= env.state_dynamics(sts[tt], action, dynamics_noise)
+        observations = env.observation_function(states = sts[tt + 1], m = observation_noise)
+
+        β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, actual_time)
+        temp = []
+        for ii in eachindex(players)
+            temp = vcat(temp, vcat(x̂ₖ₊₁[Block(ii)], vec(Σₖ₊₁[Block(ii, ii)])))
+        end
+        b̄[tt + 1] .= temp
+    end
+
+    return b̄, sts
+end
+
 function cost(players, b, u)
-    cₖ = BlockVector([player.cost for player in players],
-                    [1 for _ in eachindex(players)])
+    cₖ = [player.cost for player in players]
+    cₗ = [player.final_cost for player in players]
 
-    cₗ = BlockVector([player.final_cost for player in players],
-                    [1 for _ in eachindex(players)])
-
-    Q = [0 for _ in eachindex(players)]
+    Q = [0.0 for _ in eachindex(players)]
 
     for ii in eachindex(players)
-        for tt in eachindex(b[Block(ii)])
-            Q[ii] += cₖ[Block(ii)](b[tt][Block(ii)], u[tt][Block(ii)])
+        for tt in 1 : length(blocks(b)) - 1
+            actions = BlockVector(vcat([u[Block(ii, tt)] for ii in eachindex(players)]...),
+                [player.action_space for player in players])
+            Q[ii] += cₖ[ii](b[tt], actions)
         end
+        Q[ii] += cₗ[ii](b[end])
     end
+    
     return Q
 end
 
+
+function get_prefixes(b̄, prefix_length::Int)
+    return BlockVector(vcat([b̄[Block(ii)][1:prefix_length] for ii in eachindex(blocks(b̄))]...),
+        [prefix_length for _ in eachindex(blocks(b̄))])
+end
 
 function calculate_belief_variables(env, players, observations, time)
     num_players = length(players) 
@@ -138,7 +181,9 @@ function calculate_belief_variables(env, players, observations, time)
 
     noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
     zeroed_env_noise = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players], [env.observation_noise_dim for _ in eachindex(players)])
-    x̂ₖ₊₁ = noiseless_x̂ₖ₊₁ + Kₖ * (observations - env.observation_function(states = noiseless_x̂ₖ₊₁, m = zeroed_env_noise))
+    
+    temp  = env.observation_function(states = noiseless_x̂ₖ₊₁, m = zeroed_env_noise)
+    x̂ₖ₊₁ = noiseless_x̂ₖ₊₁ + Kₖ * (observations - temp)
     Σₖ₊₁ = (I - Kₖ * Hₖ) * Γₖ₊₁
 
     x̂_temp = BlockVector(x̂ₖ₊₁, mean_lengths)
@@ -148,7 +193,7 @@ function calculate_belief_variables(env, players, observations, time)
 
     β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(players)]...), 
                     [mean_lengths[i] + cov_lengths[i]^2 for i in eachindex(players)])
-    return β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁
+    return β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block
 end
 
 end
