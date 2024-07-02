@@ -71,7 +71,7 @@ function init_player(;
 		return nothing
 	end
 
-	player(player_type, player_id, belief, cost, final_cost, [], belief_updater, action_selector, action_space,
+	player(player_type, player_id, belief, cost, final_cost, [[nothing, belief, nothing]], belief_updater, action_selector, action_space,
         observation_space, predicted_belief, predicted_control, feedback_law)
 end
 

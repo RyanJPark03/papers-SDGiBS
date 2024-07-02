@@ -126,8 +126,9 @@ function init(; L::Int = 1)
 		R = Matrix(0.1 * I, 2, 2)
 		return u[Block(1)]' * R * u[Block(1)]
 	end
-	function cₗ¹(β::BlockVector{Float64}, u::BlockVector{Float64}) # TODO: Wrong,  
-		return determinant(reshape(β[Block(2)][5:8], (2, 2)))
+	function cₗ¹(β::BlockVector{Float64})  
+		# return det(reshape(β[Block(2)][5:8], (2, 2)))
+		return prod(diag(reshape(β[Block(2)][5:8], (2, 2))))
 	end
 
 	α₁ = 1.0
@@ -144,7 +145,7 @@ function init(; L::Int = 1)
 		return u[Block(2)]' * R * u[Block(2)] + α₁(β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
 	end
 
-	function cₗ²(β::BlockVector{Float64}, u::BlockVector{Float64})
+	function cₗ²(β::BlockVector{Float64})
 		return α₁ * (β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
 	end
 	costs = [cₖ¹, cₖ²]

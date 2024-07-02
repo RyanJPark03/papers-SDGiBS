@@ -16,10 +16,10 @@ end
 
 export SDGiBS_solve_action
 function SDGiBS_solve_action(players::Array, env) 
-    Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
-        for ii in eachindex(players)
-            Σₒ[Block(ii, ii)] .= reshape(players[ii].history[env.time][2][env.state_dim + 1:end], (env.state_dim, env.state_dim))
-        end
+    # Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
+    # for ii in eachindex(players)
+    #     Σₒ[Block(ii, ii)] .= reshape(players[ii].history[env.time][2][env.state_dim + 1:end], (env.state_dim, env.state_dim))
+    # end
     
     # ū = BlockVector(vcat([player.predicted_control[env.time:end] for player in players]...),
     #                 [length(player.predicted_control[env.time:end]) for player in players])
@@ -51,9 +51,7 @@ function SDGiBS_solve_action(players::Array, env)
         # u_b_vec = BlockVector(vcat(b̄[end], ū[end]), [length(b̄[end]), length(ū[end])])
         # u_b_vec = BlockVector(b̄[end], [length(b̄[end])])
         V = cₗ(b̄[end])
-        V_b_1 = Enzyme.jacobian(Forward, players[1].final_cost, b̄[end])
-        V_b_2 = Enzyme.jacobian(Forward, players[2].final_cost, b̄[end])
-        V_b = vcat(V_b_1, V_b_2)
+        V_b = map((cᵢ) -> Enzyme.jacobian(Forward, cᵢ, b̄[end]), [player.final_cost for player in players])
         println("---------------------------------")
         # V_bb = Enzyme.jacobian((x) -> Enzyme.jacobian(cₗ, x), b̄[end])
         error("holy moly it worked")
@@ -72,6 +70,7 @@ function simulate(env, players, ū; noise = false)
     sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in 1:env.final_time - env.time + 1]
 
     belief_length = length(players[1].history[end][2])
+
     b̄[1] = BlockVector(vcat([player.history[env.time][2] for player in players]...),
         [belief_length for player in players])
     sts[1] .= env.current_state
