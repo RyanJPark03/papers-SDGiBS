@@ -50,15 +50,14 @@ end
 
 function init(; L::Int = 1)
 
-	function state_dynamics(states::BlockVector, u::BlockVector, m::BlockVector;
-			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true)
+	function state_dynamics(states::BlockVector{T}, u::BlockVector, m::BlockVector;
+			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true) where T
 		new_state = Union{BlockVector, Vector}
 		if block
 			new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
 		else
-			new_state = [0.0 for _ in 1 : 4 * length(blocks(states))]
+			new_state = Vector{T}(undef, 4 * length(blocks(states)))
 		end
-
 		for i in eachindex(blocks(states))
 			x, y, θ, v = states[Block(i)]
 			accel, steer = u[Block(i)]
@@ -96,14 +95,15 @@ function init(; L::Int = 1)
 		return noise
 	end
 
-	function observation_function(; states::BlockVector, m::BlockVector{Float64}, N::Function = measurement_noise_scaler, block=true)
+	function observation_function(; states::BlockVector{T}, m, N::Function = measurement_noise_scaler, block=true) where T
 		observations = Union{BlockVector, Vector}
 		if block
 			observations = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
 		else
-			observations = [0.0 for _ in 1 : 4 * length(blocks(states))]
+			observations = Vector{T}(undef, 4 * length(blocks(states)))
 		end
-
+		# println("hello")
+		# println(typeof(observations))
 		for i in eachindex(blocks(states))
 			if block
 				observations[Block(i)] .= states[Block(i)] + N(states[Block(i)]) * m[Block(i)]
@@ -140,11 +140,11 @@ function init(; L::Int = 1)
 	initial_beliefs[Block(1)] .= vcat(initial_state[Block(1)], vec(initial_cov_matrix))
 	initial_beliefs[Block(2)] .= vcat(initial_state[Block(2)], vec(initial_cov_matrix))
 
-	function cₖ¹(β::BlockVector{Float64}, u::BlockVector{Float64})
+	function cₖ¹(β, u)
 		R = Matrix(0.1 * I, 2, 2)
 		return u[Block(1)]' * R * u[Block(1)]
 	end
-	function cₗ¹(β::BlockVector{Float64})
+	function cₗ¹(β)
 		temp = reshape(β[Block(2)][5:end], (4, 4))
 		# t = det(temp) # originally we care about determinant of covariance matrix
 		# println("all good")
@@ -154,18 +154,18 @@ function init(; L::Int = 1)
 	α₁ = 1.0
 	α₂ = 1.0
 	vₖ_des = 1.0
-	function c_coll(β::BlockVector{Float64})
+	function c_coll(β)
 		# "c_coll = exp(-d(xₖ)). Here d(xₖ) is the expcted euclidean distance
 		# until collision between the two agents, taking their outline into account."
 		# TODO wtf does "taking their outline into account" mean???
 		return norm(β[Block(1)][1:2] - β[Block(2)][1:2], 2)
 	end
-	function cₖ²(β::BlockVector{Float64}, u::BlockVector{Float64})
+	function cₖ²(β, u)
 		R = Matrix(0.1 * I, 2, 2)
 		return u[Block(2)]' * R * u[Block(2)] + α₁(β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
 	end
 
-	function cₗ²(β::BlockVector{Float64})
+	function cₗ²(β)
 		return α₁ * norm(β[Block(2)][4] - vₖ_des, 2)^2 + α₂ * c_coll(β)
 	end
 	costs = [cₖ¹, cₖ²]

@@ -3,6 +3,7 @@ module SDGiBS
 using BlockArrays
 using LinearAlgebra
 using ForwardDiff
+using ForwardDiff: Chunk, JacobianConfig
 using Distributions
 
 export belief_update
@@ -39,6 +40,7 @@ function SDGiBS_solve_action(players::Array, env)
     Q_new = cost(players, b̄, ū)
 
     π = []
+    c = [player.final_cost for player in players]
     
     while norm(Q_new - Q_old, 2) > ϵ
         # Bakcwards Pass
@@ -47,10 +49,9 @@ function SDGiBS_solve_action(players::Array, env)
         # u_b_vec = BlockVector(vcat(b̄[end], ū[end]), [length(b̄[end]), length(ū[end])])
         # u_b_vec = BlockVector(b̄[end], [length(b̄[end])])
         V = cₗ(b̄[end])
-        V_b_1 = ForwardDiff.jacobian(players[1].final_cost, b̄[end])
-        V_b_2 = ForwardDiff.jacobian(players[2].final_cost, b̄[end])
-        V_b = vcat(V_b_1, V_b_2)
+        V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
         println("---------------------------------")
+        V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end]), c)
         # V_bb = ForwardDiff.jacobian((x) -> ForwardDiff.jacobian(cₗ, x), b̄[end])
         error("holy moly it worked")
         for tt in env.final_time:-1:env.time
@@ -159,27 +160,33 @@ function calculate_belief_variables(env, players, observations, time)
         states = BlockVector(x[Block(1)], mean_lengths),
         m = BlockVector(x[Block(2)], [env.observation_noise_dim for _ in 1:num_players]), block = false)
 
-
-    f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]))::Vector{Float64}
+    j_cfg = JacobianConfig(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), Chunk{20}())
+    f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), j_cfg)
     Aₖ = f_jacobian[:, 1:length(x̂ₖ)]
     Mₖ = f_jacobian[:, length(x̂ₖ) + length(uₖ)+ 1:end]
 
     n = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players],
                     [env.observation_noise_dim for _ in 1:num_players])
 
+    # Main.@infiltrate
+
     h_jacobian = ForwardDiff.jacobian(h, BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)]))
 
     Hₖ = h_jacobian[:, 1:length(x̂ₖ)]
     Nₖ = h_jacobian[:, length(x̂ₖ) + 1:end]
 
-    Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
-    Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
+    # Main.@infiltrate
+
+    Γₖ₊₁ = Float64.(Aₖ) * Σₖ * Float64.(Aₖ') + Mₖ * Mₖ'
+    Kₖ = Γₖ₊₁ * Hₖ' * ((Float64.(Hₖ) * Γₖ₊₁ * Float64.(Hₖ') + Float64.(Nₖ) * Float64.(Nₖ')) \ I)
+
 
     noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
     zeroed_env_noise = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players], [env.observation_noise_dim for _ in eachindex(players)])
     
     temp  = env.observation_function(states = noiseless_x̂ₖ₊₁, m = zeroed_env_noise)
-    x̂ₖ₊₁ = noiseless_x̂ₖ₊₁ + Kₖ * (observations - temp)
+    # Main.@infiltrate
+    x̂ₖ₊₁ = noiseless_x̂ₖ₊₁ + Float64.(Kₖ) * (observations - temp)
     Σₖ₊₁ = (I - Kₖ * Hₖ) * Γₖ₊₁
 
     x̂_temp = BlockVector(x̂ₖ₊₁, mean_lengths)
