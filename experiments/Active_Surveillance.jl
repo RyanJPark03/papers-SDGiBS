@@ -199,32 +199,44 @@ function test()
 		t = vcat([x, u, m]...)
 		display(t)
 
-    f_jacobian = ForwardDiff.jacobian(f, BlockVector(t, [8, 4, 8]))
-	display(f_jacobian)
+    display(ForwardDiff.jacobian(f, BlockVector(t, [8, 4, 8])))
+	# display(f_jacobian)
 end
 
 function sd(states::BlockVector, u::BlockVector, m::BlockVector;
 	τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true)
-new_state = Union{BlockVector, Vector}
-if block
-	new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
-else
-	new_state = [0.0 for _ in 1 : 4 * length(blocks(states))]
-end
-
-for i in eachindex(blocks(states))
-	x, y, θ, v = states[Block(i)]
-	accel, steer = u[Block(i)]
-
-	# TODO: Find a good value for L
-	ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
-
-	# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
+	new_state = Union{BlockVector, Vector{Any}}
 	if block
-		new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+		new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
 	else
-		new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+		new_state = [nothing for _ in 1 : 4 * length(blocks(states))]
 	end
-end
-return new_state
+	println("done 0")
+
+	for i in eachindex(blocks(states))
+		x, y, θ, v = states[Block(i)]
+		accel, steer = u[Block(i)]
+		println("done 1")
+
+		# TODO: Find a good value for L
+		ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
+
+		# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
+		println("done 2")
+		if block
+			new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+		else
+			# temp =  states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+
+			# display(temp)
+			# println(size(temp))
+			# println(typeof(temp))
+			println("done 3")
+
+			states[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+		end
+	end
+	println("done 10")
+	display(states)
+	return  states
 end
