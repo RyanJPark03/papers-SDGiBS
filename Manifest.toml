@@ -2,17 +2,20 @@
 
 julia_version = "1.10.4"
 manifest_format = "2.0"
-project_hash = "ef10d70bb0a9ca65ec4182c6c32709937bac1deb"
+project_hash = "93407e5ee68a4dd0b585b3152de62ea7c1d06030"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "ae44a0c3d68a420d4ac0fa1f7e0c034ccecb6dc5"
 uuid = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
 version = "1.5.2"
-weakdeps = ["ChainRulesCore", "EnzymeCore"]
 
     [deps.ADTypes.extensions]
     ADTypesChainRulesCoreExt = "ChainRulesCore"
     ADTypesEnzymeCoreExt = "EnzymeCore"
+
+    [deps.ADTypes.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
@@ -120,11 +123,6 @@ version = "1.1.0"
 
     [deps.BlockArrays.weakdeps]
     BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
-
-[[deps.CEnum]]
-git-tree-sha1 = "389ad5c84de1ae7cf0e28e381131c98ea87d54fc"
-uuid = "fa961155-64e5-5f13-b03f-caf6b980ea82"
-version = "0.5.0"
 
 [[deps.Calculus]]
 deps = ["LinearAlgebra"]
@@ -290,33 +288,6 @@ git-tree-sha1 = "bdb1942cd4c45e3c678fd11569d5cccd80976237"
 uuid = "4e289a0a-7415-4d19-859d-a7e5c4648b56"
 version = "1.0.4"
 
-[[deps.Enzyme]]
-deps = ["CEnum", "EnzymeCore", "Enzyme_jll", "GPUCompiler", "LLVM", "Libdl", "LinearAlgebra", "ObjectFile", "Preferences", "Printf", "Random"]
-git-tree-sha1 = "47a3c7bbd1c85c0be076b483a2d177008b8d4a73"
-uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
-version = "0.12.20"
-weakdeps = ["ChainRulesCore", "SpecialFunctions", "StaticArrays"]
-
-    [deps.Enzyme.extensions]
-    EnzymeChainRulesCoreExt = "ChainRulesCore"
-    EnzymeSpecialFunctionsExt = "SpecialFunctions"
-    EnzymeStaticArraysExt = "StaticArrays"
-
-[[deps.EnzymeCore]]
-git-tree-sha1 = "3a3177ba05b4763234819060fb6c2e1613379ca6"
-uuid = "f151be2c-9106-41f4-ab19-57ee4f262869"
-version = "0.7.6"
-weakdeps = ["Adapt"]
-
-    [deps.EnzymeCore.extensions]
-    AdaptExt = "Adapt"
-
-[[deps.Enzyme_jll]]
-deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl", "TOML"]
-git-tree-sha1 = "ed3b3b6538a88831ae461d318529dd462e3a895d"
-uuid = "7cc45869-7501-5eee-bdea-0790c847d4ef"
-version = "0.0.127+0"
-
 [[deps.ExprTools]]
 git-tree-sha1 = "27415f162e6028e81c72b82ef756bf321213b6ec"
 uuid = "e2ba6199-217a-4e67-a87a-7c52f15ade04"
@@ -373,12 +344,6 @@ git-tree-sha1 = "ec632f177c0d990e64d955ccc1b8c04c485a0950"
 uuid = "46192b85-c4d5-4398-a991-12ede77f4527"
 version = "0.1.6"
 
-[[deps.GPUCompiler]]
-deps = ["ExprTools", "InteractiveUtils", "LLVM", "Libdl", "Logging", "Scratch", "TimerOutputs", "UUIDs"]
-git-tree-sha1 = "518ebd058c9895de468a8c255797b0c53fdb44dd"
-uuid = "61eb1bfa-7361-4325-ad38-22787b887f55"
-version = "0.26.5"
-
 [[deps.HypergeometricFunctions]]
 deps = ["DualNumbers", "LinearAlgebra", "OpenLibm_jll", "SpecialFunctions"]
 git-tree-sha1 = "f218fe3736ddf977e0e772bc9a586b2383da2685"
@@ -431,24 +396,6 @@ git-tree-sha1 = "7e5d6779a1e09a36db2a7b6cff50942a0a7d0fca"
 uuid = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
 version = "1.5.0"
 
-[[deps.LLVM]]
-deps = ["CEnum", "LLVMExtra_jll", "Libdl", "Preferences", "Printf", "Requires", "Unicode"]
-git-tree-sha1 = "389aea28d882a40b5e1747069af71bdbd47a1cae"
-uuid = "929cbde3-209d-540e-8aea-75f648917ca0"
-version = "7.2.1"
-
-    [deps.LLVM.extensions]
-    BFloat16sExt = "BFloat16s"
-
-    [deps.LLVM.weakdeps]
-    BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
-
-[[deps.LLVMExtra_jll]]
-deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl", "TOML"]
-git-tree-sha1 = "88b916503aac4fb7f701bb625cd84ca5dd1677bc"
-uuid = "dad2f222-ce93-54a1-a47d-0025e8a3acab"
-version = "0.0.29+0"
-
 [[deps.LaTeXStrings]]
 git-tree-sha1 = "50901ebc375ed41dbf8058da26f9de442febbbec"
 uuid = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
@@ -478,10 +425,6 @@ version = "0.16.3"
     [deps.Latexify.weakdeps]
     DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
     SymEngine = "123dc426-2d89-5057-bbad-38513e3affd8"
-
-[[deps.LazyArtifacts]]
-deps = ["Artifacts", "Pkg"]
-uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
 
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
@@ -579,12 +522,6 @@ version = "1.0.2"
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
-
-[[deps.ObjectFile]]
-deps = ["Reexport", "StructIO"]
-git-tree-sha1 = "195e0a19842f678dd3473ceafbe9d82dfacc583c"
-uuid = "d8793406-e978-5875-9003-1fc021f44a92"
-version = "0.4.1"
 
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
@@ -765,12 +702,6 @@ git-tree-sha1 = "6ab4beaf88dcdd2639bead916f2347f81dcacd0e"
 uuid = "53ae85a6-f571-4167-b2af-e1d143709226"
 version = "1.3.0"
 
-[[deps.Scratch]]
-deps = ["Dates"]
-git-tree-sha1 = "3bac05bc7e74a75fd9cba4295cde4045d9fe2386"
-uuid = "6c6a2e73-6563-6170-7368-637461726353"
-version = "1.2.1"
-
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
@@ -847,12 +778,6 @@ weakdeps = ["ChainRulesCore", "InverseFunctions"]
     [deps.StatsFuns.extensions]
     StatsFunsChainRulesCoreExt = "ChainRulesCore"
     StatsFunsInverseFunctionsExt = "InverseFunctions"
-
-[[deps.StructIO]]
-deps = ["Test"]
-git-tree-sha1 = "010dc73c7146869c042b49adcdb6bf528c12e859"
-uuid = "53d494c1-5632-5724-8f4c-31dff12d585f"
-version = "0.3.0"
 
 [[deps.SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]

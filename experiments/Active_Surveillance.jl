@@ -50,24 +50,33 @@ end
 
 function init(; L::Int = 1)
 
-	function state_dynamics(states::BlockVector{Float64}, u::BlockVector{Float64}, m::BlockVector{Float64};
-			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0)
-		new_state = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
+	function state_dynamics(states::BlockVector, u::BlockVector, m::BlockVector;
+			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true)
+		new_state = Union{BlockVector, Vector}
+		if block
+			new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
+		else
+			new_state = [0.0 for _ in 1 : 4 * length(blocks(states))]
+		end
+
 		for i in eachindex(blocks(states))
 			x, y, θ, v = states[Block(i)]
 			accel, steer = u[Block(i)]
 
 			# TODO: Find a good value for L
-			# ẋ = [v * cos(θ), v * sin(θ), accel, v / (L * tan(steer))]
 			ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
 
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
-			new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+			if block
+				new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+			else
+				new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+			end
 		end
 		return new_state
 	end
 
-	function measurement_noise_scaler(state::Vector{Float64}; surveillance_radius::Int = 10)
+	function measurement_noise_scaler(state::Vector; surveillance_radius::Int = 10)
 		# Only take x and y coords from state vector
 		n = norm(state[1:2], 2) - surveillance_radius
 		n = max(1, n) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
@@ -87,11 +96,20 @@ function init(; L::Int = 1)
 		return noise
 	end
 
-	function observation_function(; states::BlockVector{Float64}, m::BlockVector{Float64}, N::Function = measurement_noise_scaler)
-		observations = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
+	function observation_function(; states::BlockVector, m::BlockVector{Float64}, N::Function = measurement_noise_scaler, block=true)
+		observations = Union{BlockVector, Vector}
+		if block
+			observations = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
+		else
+			observations = [0.0 for _ in 1 : 4 * length(blocks(states))]
+		end
 
 		for i in eachindex(blocks(states))
-			observations[Block(i)] .= states[Block(i)] + N(states[Block(i)]) * m[Block(i)]
+			if block
+				observations[Block(i)] .= states[Block(i)] + N(states[Block(i)]) * m[Block(i)]
+			else
+				observations[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + N(states[Block(i)]) * m[Block(i)]
+			end
 		end
 
 		return observations
@@ -126,8 +144,11 @@ function init(; L::Int = 1)
 		R = Matrix(0.1 * I, 2, 2)
 		return u[Block(1)]' * R * u[Block(1)]
 	end
-	function cₗ¹(β::BlockVector{Float64}, u::BlockVector{Float64}) # TODO: Wrong,  
-		return determinant(reshape(β[Block(2)][5:8], (2, 2)))
+	function cₗ¹(β::BlockVector{Float64})
+		temp = reshape(β[Block(2)][5:end], (4, 4))
+		# t = det(temp) # originally we care about determinant of covariance matrix
+		# println("all good")
+		return prod(diag(temp))	
 	end
 
 	α₁ = 1.0
@@ -144,8 +165,8 @@ function init(; L::Int = 1)
 		return u[Block(2)]' * R * u[Block(2)] + α₁(β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
 	end
 
-	function cₗ²(β::BlockVector{Float64}, u::BlockVector{Float64})
-		return α₁ * (β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
+	function cₗ²(β::BlockVector{Float64})
+		return α₁ * norm(β[Block(2)][4] - vₖ_des, 2)^2 + α₂ * c_coll(β)
 	end
 	costs = [cₖ¹, cₖ²]
 	final_costs = [cₗ¹, cₗ²]
@@ -163,4 +184,47 @@ function init(; L::Int = 1)
 		time = 20) for i in 1:2]
 
 	return surveillance_demo(env, players)
+end
+
+using ForwardDiff
+function test()
+	f = (x) -> sd(
+        BlockVector(x[Block(1)], [4, 4]), # 4, 4
+        BlockVector(x[Block(2)], [2, 2]), # 2, 2
+        BlockArray(x[Block(3)], [4, 4]), # size 4, 4
+		block=false)
+
+		x, u, m = zeros(8), zeros(4), zeros(8)
+		println("types:", typeof(x), typeof(u), typeof(m))
+		t = vcat([x, u, m]...)
+		display(t)
+
+    f_jacobian = ForwardDiff.jacobian(f, BlockVector(t, [8, 4, 8]))
+	display(f_jacobian)
+end
+
+function sd(states::BlockVector, u::BlockVector, m::BlockVector;
+	τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true)
+new_state = Union{BlockVector, Vector}
+if block
+	new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
+else
+	new_state = [0.0 for _ in 1 : 4 * length(blocks(states))]
+end
+
+for i in eachindex(blocks(states))
+	x, y, θ, v = states[Block(i)]
+	accel, steer = u[Block(i)]
+
+	# TODO: Find a good value for L
+	ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
+
+	# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
+	if block
+		new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+	else
+		new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+	end
+end
+return new_state
 end

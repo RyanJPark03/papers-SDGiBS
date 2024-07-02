@@ -54,7 +54,7 @@ function init_player(;
 	action_selector::Function = () -> true
 
 	predicted_belief = [belief for _ in 1:time+1]
-	predicted_control = [copy(default_action) for _ in 1:time+1]
+	predicted_control = [copy(default_action) for _ in 1:time]
 	feedback_law = nothing
 
 	if player_type == no_change
@@ -71,8 +71,10 @@ function init_player(;
 		return nothing
 	end
 
-	player(player_type, player_id, belief, cost, final_cost, [], belief_updater, action_selector, action_space,
-        observation_space, predicted_belief, predicted_control, feedback_law)
+	player(player_type, player_id, belief, cost, final_cost,
+    [[nothing, belief, default_action]], belief_updater, action_selector,
+    action_space, observation_space, predicted_belief, predicted_control,
+    feedback_law)
 end
 
 function handle_SDGiBS_action(players::Array{player}, env::base_environment,
