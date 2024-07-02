@@ -3,7 +3,7 @@ module SDGiBS
 using BlockArrays
 using LinearAlgebra
 using ForwardDiff
-using ForwardDiff: Chunk, JacobianConfig
+using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 using Distributions
 
 export belief_update
@@ -41,23 +41,21 @@ function SDGiBS_solve_action(players::Array, env)
 
     π = []
     c = [player.final_cost for player in players]
+    h_cfg = ForwardDiff.HessianConfig(c[1], b̄[end], Chunk{20}())
     
     while norm(Q_new - Q_old, 2) > ϵ
         # Bakcwards Pass
         # β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt)
 
-        # u_b_vec = BlockVector(vcat(b̄[end], ū[end]), [length(b̄[end]), length(ū[end])])
-        # u_b_vec = BlockVector(b̄[end], [length(b̄[end])])
         V = cₗ(b̄[end])
-        V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
-        println("---------------------------------")
-        V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end]), c)
-        # V_bb = ForwardDiff.jacobian((x) -> ForwardDiff.jacobian(cₗ, x), b̄[end])
+        V_b = vcat(map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)...)
+        # V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end]), c)
+        Main.@infiltrate
+        temp = zeros((40, 40))
+        V_bb_1 = ForwardDiff.hessian!(temp, c[1], b̄[end], h_cfg)
         error("holy moly it worked")
         for tt in env.final_time:-1:env.time
         end
-        
-
     end
 
     error("skipped while loop")
