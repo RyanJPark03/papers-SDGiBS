@@ -145,10 +145,12 @@ function init(; L::Int = 1)
 		return u[Block(1)]' * R * u[Block(1)]
 	end
 	function cₗ¹(β)
-		temp = reshape(β[Block(2)][5:end], (4, 4))
-		# t = det(temp) # originally we care about determinant of covariance matrix
-		# println("all good")
-		return prod(diag(temp))	
+		if typeof(β) == BlockVector
+			return prod(diag(reshape(β[Block(2)][5:end], (4, 4))))
+		else
+			return prod(diag(reshape(β[Int(length(β)//2 + 5):end], (4, 4))))
+		end
+		return 	t
 	end
 
 	α₁ = 1.0
@@ -188,55 +190,20 @@ end
 
 using ForwardDiff
 function test()
-	f = (x) -> sd(
-        BlockVector(x[Block(1)], [4, 4]), # 4, 4
-        BlockVector(x[Block(2)], [2, 2]), # 2, 2
-        BlockArray(x[Block(3)], [4, 4]), # size 4, 4
-		block=false)
+	f = (x) -> x[1] * x[2] + x[3]
+	# f = (x) -> prod(diag(reshape(x[5:end], (2, 2))))
 
-		x, u, m = zeros(8), zeros(4), zeros(8)
-		println("types:", typeof(x), typeof(u), typeof(m))
-		t = vcat([x, u, m]...)
-		display(t)
-
-    display(ForwardDiff.jacobian(f, BlockVector(t, [8, 4, 8])))
-	# display(f_jacobian)
+	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [4, 4])
+	# ^^ Breaks
+	x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [8])
+	# ^^ Breaks
+	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [1, 7])
+	# x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+	A = zeros((8, 8))
+	# y = vec(x)
+	y = x[1:end]
+	println(typeof(y))
+	f_hessian = ForwardDiff.hessian!(A, f, y)
+	display(f_hessian)
 end
 
-function sd(states::BlockVector, u::BlockVector, m::BlockVector;
-	τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true)
-	new_state = Union{BlockVector, Vector{Any}}
-	if block
-		new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
-	else
-		new_state = [nothing for _ in 1 : 4 * length(blocks(states))]
-	end
-	println("done 0")
-
-	for i in eachindex(blocks(states))
-		x, y, θ, v = states[Block(i)]
-		accel, steer = u[Block(i)]
-		println("done 1")
-
-		# TODO: Find a good value for L
-		ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
-
-		# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
-		println("done 2")
-		if block
-			new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
-		else
-			# temp =  states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
-
-			# display(temp)
-			# println(size(temp))
-			# println(typeof(temp))
-			println("done 3")
-
-			states[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
-		end
-	end
-	println("done 10")
-	display(states)
-	return  states
-end
