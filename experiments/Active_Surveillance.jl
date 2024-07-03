@@ -160,7 +160,11 @@ function init(; L::Int = 1)
 		# "c_coll = exp(-d(xₖ)). Here d(xₖ) is the expcted euclidean distance
 		# until collision between the two agents, taking their outline into account."
 		# TODO wtf does "taking their outline into account" mean???
-		return norm(β[Block(1)][1:2] - β[Block(2)][1:2], 2)
+		if typeof(β) == BlockVector
+			return norm(β[Block(1)][1:2] - β[Block(2)][1:2], 2)
+		else
+			return norm(β[1:2] - β[Int(length(β)//2 + 1):Int(length(β)//2 + 2)], 2)
+		end
 	end
 	function cₖ²(β, u)
 		R = Matrix(0.1 * I, 2, 2)
@@ -168,7 +172,11 @@ function init(; L::Int = 1)
 	end
 
 	function cₗ²(β)
-		return α₁ * norm(β[Block(2)][4] - vₖ_des, 2)^2 + α₂ * c_coll(β)
+		if typeof(β) == BlockVector
+			return α₁ * norm(β[Block(2)][4] - vₖ_des, 2)^2 + α₂ * c_coll(β)
+		else
+			return α₁ * norm(β[Int(length(β)//2 + 4)] - vₖ_des, 2)^2 + α₂ * c_coll(β)
+		end
 	end
 	costs = [cₖ¹, cₖ²]
 	final_costs = [cₗ¹, cₗ²]

@@ -41,22 +41,15 @@ function SDGiBS_solve_action(players::Array, env)
 
     π = []
     c = [player.final_cost for player in players]
-    h_cfg = ForwardDiff.HessianConfig(c[1], b̄[end])
-    
+
     while norm(Q_new - Q_old, 2) > ϵ
         # Bakcwards Pass
         # β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt)
 
         V = cₗ(b̄[end])
         V_b = vcat(map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)...)
-        # V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end]), c)
-        # Main.@infiltrate
-        # temp = zeros((40, 40))
-        # V_bb_1 = ForwardDiff.hessian!(temp, c[1], b̄[end], h_cfg)
-        # V_bb_1 = ForwardDiff.hessian(c[1], b̄[end], h_cfg)
-        println("doing hessian")
-        ∇f = y -> ForwardDiff.gradient(c[1], y)
-        V_bb = ForwardDiff.jacobian(∇f, b̄[end][1:end])
+        # V_bb = ForwardDiff.hessian(c[1], b̄[end][1:end])
+        V_bb = vcat(map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)...)
         error("holy moly it worked")
         for tt in env.final_time:-1:env.time
         end
