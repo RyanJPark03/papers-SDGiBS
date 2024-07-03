@@ -22,6 +22,7 @@ function SDGiBS_solve_action(players::Array, env)
     #                 [length(player.predicted_control[env.time:end]) for player in players])
     ū = BlockArray(hcat([vcat([player.predicted_control[tt] for player in players]...) for tt in env.time:env.final_time - 1]...),
                     [player.action_space for player in players], [1 for _ in env.time:env.final_time - 1])
+    u_k = (tt) -> BlockVector(vcat(ū[Block(ii, tt)] for ii in eachindex(players)), [player.action_space for player in players])
 
     cₖ = (x) -> [player.cost(BlockVector(x[Block(1)], [env.state_dim for _ in players])
         , BlockVector(x[Block(2)], [p.action_space for p in players])) for player in players]
@@ -29,7 +30,7 @@ function SDGiBS_solve_action(players::Array, env)
     
 
 
-    b̄ = simulate(env, players, ū)[1]
+    b̄, nominal_states = simulate(env, players, ū)[1]
 
     @assert length(b̄) == size(ū)[2] + 1
     @assert length(b̄) == env.final_time - env.time + 1
@@ -52,6 +53,11 @@ function SDGiBS_solve_action(players::Array, env)
         V_bb = vcat(map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)...)
         error("holy moly it worked")
         for tt in env.final_time:-1:env.time
+            # πₖ = ūₖ + jₖ + Kₖ * δbₖ
+            # jₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
+            # Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
+            # TODO: update cₖ to match cₗ
+            Qₖ = cₖ(b̄[tt], u_k(tt)) + V + .5 * sum()
         end
     end
 
@@ -121,7 +127,9 @@ end
 
 function calculate_belief_variables(env, players, observations, time)
     num_players = length(players) 
+    # TODO: this is at env.time, not at input time
     β = BlockVector(vcat([player.belief for player in players]...), [length(player.belief) for player in players])
+
 
     mean_lengths = [env.state_dim for _ in 1:num_players]
     cov_length = Int(sqrt(Int(length(β) // num_players - env.state_dim)))
