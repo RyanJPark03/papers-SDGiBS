@@ -53,6 +53,7 @@ function init(; L::Int = 1)
 	function state_dynamics(states::BlockVector{T}, u::BlockVector, m::BlockVector;
 			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true) where T
 		new_state = Union{BlockVector, Vector}
+		# should i make new_state the same length as states?
 		if block
 			new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
 		else
@@ -102,8 +103,6 @@ function init(; L::Int = 1)
 		else
 			observations = Vector{T}(undef, 4 * length(blocks(states)))
 		end
-		# println("hello")
-		# println(typeof(observations))
 		for i in eachindex(blocks(states))
 			if block
 				observations[Block(i)] .= states[Block(i)] + N(states[Block(i)]) * m[Block(i)]
@@ -142,7 +141,11 @@ function init(; L::Int = 1)
 
 	function cₖ¹(β, u)
 		R = Matrix(0.1 * I, 2, 2)
-		return u[Block(1)]' * R * u[Block(1)]
+		if typeof(u) == BlockVector
+			return u[Block(1)]' * R * u[Block(1)]
+		else
+			return u[1:2]' * R * u[1:2]
+		end
 	end
 	function cₗ¹(β)
 		if typeof(β) == BlockVector
@@ -196,6 +199,7 @@ function init(; L::Int = 1)
 	return surveillance_demo(env, players)
 end
 
+# TODO: Delete
 using ForwardDiff
 function test()
 	f = (x) -> x[1] * x[2] + x[3]

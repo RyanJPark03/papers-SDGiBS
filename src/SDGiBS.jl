@@ -2,7 +2,7 @@ module SDGiBS
 
 using BlockArrays
 using LinearAlgebra
-using ForwardDiff
+using ForwardDiff, DiffResults
 using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 using Distributions
 
@@ -12,7 +12,7 @@ function belief_update(env, players::Array, observations)
 end
 
 export SDGiBS_solve_action
-function SDGiBS_solve_action(players::Array, env) 
+function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0) 
     Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
         for ii in eachindex(players)
             Σₒ[Block(ii, ii)] .= reshape(players[ii].history[env.time][2][env.state_dim + 1:end], (env.state_dim, env.state_dim))
@@ -22,7 +22,13 @@ function SDGiBS_solve_action(players::Array, env)
     #                 [length(player.predicted_control[env.time:end]) for player in players])
     ū = BlockArray(hcat([vcat([player.predicted_control[tt] for player in players]...) for tt in env.time:env.final_time - 1]...),
                     [player.action_space for player in players], [1 for _ in env.time:env.final_time - 1])
-    u_k = (tt) -> BlockVector(vcat(ū[Block(ii, tt)] for ii in eachindex(players)), [player.action_space for player in players])
+
+
+    action_length = [player.action_space for player in players]
+    u_k = (tt) -> (tt == env.final_time) ? BlockVector([0.0 for _ in 1 : sum(action_length)], action_length) :
+                    BlockVector(vcat([vec(ū[Block(ii, tt - env.time + 1)]) for ii in eachindex(players)]...), action_length)
+    gg = vcat([player.predicted_belief[1 - env.time + 1][1:env.state_dim] for player in players]...)
+    x_k = (tt) -> BlockVector(vcat([player.predicted_belief[tt - env.time + 1][1:env.state_dim] for player in players]...), [env.state_dim for player in players])
 
     cₖ = (x) -> [player.cost(BlockVector(x[Block(1)], [env.state_dim for _ in players])
         , BlockVector(x[Block(2)], [p.action_space for p in players])) for player in players]
@@ -30,7 +36,8 @@ function SDGiBS_solve_action(players::Array, env)
     
 
 
-    b̄, nominal_states = simulate(env, players, ū)[1]
+    b̄, nominal_states = simulate(env, players, ū)
+    belief_length = length(b̄[1])
 
     @assert length(b̄) == size(ū)[2] + 1
     @assert length(b̄) == env.final_time - env.time + 1
@@ -42,23 +49,70 @@ function SDGiBS_solve_action(players::Array, env)
 
     π = []
     c = [player.final_cost for player in players]
+    ck = [(x_u) -> player.cost(x_u[1:belief_length], x_u[belief_length + 1 : end]) for player in players]
+
+    # TODO: need to sum player's state_dim of belief state
+    ηₓ = env.state_dim * length(players)
 
     while norm(Q_new - Q_old, 2) > ϵ
         # Bakcwards Pass
         # β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt)
 
         V = cₗ(b̄[end])
-        V_b = vcat(map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)...)
+        V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
         # V_bb = ForwardDiff.hessian(c[1], b̄[end][1:end])
-        V_bb = vcat(map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)...)
-        error("holy moly it worked")
+        V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
+
+
+        x_u = vcat(b̄[end][1:end], u_k(1)[1:end])
+        cost_vars = DiffResults.HessianResult(x_u)
+
+
+
         for tt in env.final_time:-1:env.time
             # πₖ = ūₖ + jₖ + Kₖ * δbₖ
             # jₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
-            # Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
+            # Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ\_b
             # TODO: update cₖ to match cₗ
-            Qₖ = cₖ(b̄[tt], u_k(tt)) + V + .5 * sum()
+            # TODO: g, W (17-18), no dependency on player
+            # TODO
+            
+            x_u = vcat(b̄[tt][1:end], u_k(tt)[1:end])
+            #finding these not easy, have to refactor calculate belief_vars to take deriv
+            Wₖ = 
+            for ii in eachindex(players)
+                # println("player, time: ", ii, ", ", tt, " f = ", env.final_time)
+                cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
+
+
+                Q =  DiffResults.value(cost_vars) + V[ii] + .5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1 : env.state_dim])
+
+                Wₛ = ForwardDiff.jacobian(Wₖ, x_u)
+                gₛ = ForwardDiff.jacobian(g, x_u)
+
+                Qₛ = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
+                    sum([Wₛ[:, j]' * V_bb[ii] * Wₖ[:, j] for j in 1 : ηₓ])
+                Q_u = Qₛ[belief_length + 1 : end, :] # skip elems wrt belief
+
+                # Belief regularizatin: (V_bb[ii] + μ * I) instead of V_bb[ii]
+                Qₛₛ = DiffResults.hessian(cost_vars) +  gₛ' * (V_bb[ii] + μᵦ * I) * gₛ + 
+                    sum([Wₛ[:, j]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, j] for j in 1 : ηₓ])
+                # Control regularization
+                Q_ub = Qₛₛ[belief_length + 1 : end, 1:belief_length] + μᵤ * I
+                Q_uu = Q_ss[belief_length + 1 : end, belief_length + 1 : end]
+
+                players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] - (Q_uu\Q_u) - (Q_uu\Q_ub) * δb
+
+                error("V_ii update not implemented")
+                #TODO: update V[ii]
+            end
         end
+
+        # end backwards pass
+
+        # Forwards Pass
+
+
     end
 
     error("skipped while loop")
@@ -199,7 +253,14 @@ function calculate_belief_variables(env, players, observations, time)
 
     β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(players)]...), 
                     [mean_lengths[i] + cov_lengths[i]^2 for i in eachindex(players)])
-    return β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block
+
+    Wₖ = vcat(sqrt.(Kₖ * Hₖ * Γₖ₊₁), zeros((cov_length^2, env.state_dim)))
+    # for one player
+    #Γ is state_dim x state_dim by calc
+    # K is state_dim x state_dim by calc
+    # H is same by def
+    gₖ = vcat(noiseless_x̂ₖ₊₁, Σₖ₊₁)
+    return β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block, Wₖ, gₖ
 end
 
 end

@@ -53,7 +53,7 @@ function init_player(;
 		belief_update(player.belief, observation)
 	action_selector::Function = () -> true
 
-	predicted_belief = [belief for _ in 1:time+1]
+	predicted_belief = [copy(belief) for _ in 1:time+1]
 	predicted_control = [copy(default_action) for _ in 1:time]
 	feedback_law = nothing
 
@@ -86,32 +86,6 @@ function handle_SDGiBS_action(players::Array{player}, env::base_environment,
 	players[current_player_index].feedback_law = π
     return players[current_player_index].predicted_control[env.time]
 end
-
-# Vestigial, using time_step_all
-# function time_step(player_index::Int = -1, observation::Vector{Float64},
-# 	env::base_environment)
-# 	# TODO: What is the order? Observation -> update belief -> select action
-
-# 	player = env.players[player_index]
-
-# 	# Record observation
-# 	push!(player.history, [observation])
-
-# 	# Players start at "time 0" with a prior belief
-# 	# TODO: start environment at time 1, initilize priors
-# 	@assert length(player.history) == env.time
-
-# 	# Update belief and record
-# 	player.belief = player.belief_updater(player, observation)
-# 	push!(player.history[end], player.belief)
-
-# 	# Select action
-# 	if player.player_type == SDGiBS
-# 		return player.action_selector(env.players, env, player_index)
-# 	else
-# 		return player.action_selector(player, observation)
-# 	end
-# end
 
 export time_step_all
 function time_step_all(players::Array{player}, env::base_environment, observations)
