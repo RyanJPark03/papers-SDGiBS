@@ -63,7 +63,6 @@ function init_player(;
 		action_selector = (player::player, observation::Vector{Float64}) ->
 			rand(action_space)
 	elseif player_type == type_SDGiBS
-		# TODO: some optimization if all players are SDGiBS
 		action_selector = handle_SDGiBS_action
 
 	else

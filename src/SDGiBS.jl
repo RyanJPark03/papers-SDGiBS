@@ -53,8 +53,7 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
     c = [player.final_cost for player in players]
     ck = [(x_u) -> player.cost(x_u[1:belief_length], x_u[belief_length + 1 : end]) for player in players]
 
-    # TODO: need to sum player's state_dim of belief state
-    ηₓ = env.state_dim * length(players)
+    ηₓ = sum([player.observation_space for player in players])
 
     W = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length + 1 : end]; env = env, players = players)[1]
     g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length + 1 : end]; env = env, players = players)[2]
@@ -80,10 +79,10 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
                 cost_vars = DiffResults.HessianResult(x_u)
                 cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
 
-
                 Q =  DiffResults.value(cost_vars) + V[ii] + .5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1 : env.state_dim])
                 println("calculating Wₛ")
                 Wₛ = ForwardDiff.jacobian(W, x_u)
+                # Wₛ = Enzyme.jacobian(Reverse, W, x_u, Val(belief_length))
                 println("calculating gₛ")
                 gₛ = ForwardDiff.jacobian(g, x_u)
                 println("did both derivatives")
@@ -101,20 +100,25 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 
                 players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] - (Q_uu\Q_u) - (Q_uu\Q_ub) * δb
 
-                error("V_ii update not implemented")
-                #TODO: update V[ii]
+                jₖ = - Q_uu \ Q_u
+                V[ii] = Q + Q_u * jₖ' + .5 * jₖ' * Q_uu * jₖ
+                V_b[ii] = Q_b + Kₖ' * Q_uu * jₖ + Kₖ' * Q_u + Q_ub' * jₖ
+                V_bb[ii] = Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
             end
         end
 
-        # end backwards pass
-
         # Forwards Pass
-
-
+        if Q_new <= Q_old
+            Q_old = Q_new
+            # TODO: Update b̄, ū
+            μᵤ *= .1
+            μᵦ *= .1
+        else
+            μᵤ *= 10
+            μᵦ *= 10
+        end
     end
-
-    error("skipped while loop")
-	return [1, 1]
+    return b̄, ū, π
 end
 
 function simulate(env, players, ū; noise = false)
@@ -193,6 +197,7 @@ function calculate_matrix_belief_variables(β, u; env, players)
             end
         end
     end
+
     uₖ = BlockVector(u, [player.action_space for player in players])
     m = BlockVector([0.0 for _ in 1:env.dynamics_noise_dim * num_players],
                     [env.dynamics_noise_dim for _ in 1:num_players])

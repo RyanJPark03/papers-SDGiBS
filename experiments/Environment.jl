@@ -24,8 +24,6 @@ function init_base_environment(;
 	initial_state,
 	final_time::Int = -1)
 
-	#TODO: assert that all dimensions line up correctly, potentially init some stuff
-
 	base_environment(
 		state_dynamics,
 		observation_function,
