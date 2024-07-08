@@ -2,18 +2,15 @@ module SDGiBS
 
 using BlockArrays
 using LinearAlgebra
-<<<<<<< HEAD
 using Enzyme
 using Distributions
 
 Enzyme.API.runtimeActivity!(true)
 Enzyme.API.strictAliasing!(false)
 
-=======
 using ForwardDiff, DiffResults
 using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 using Distributions
->>>>>>> forward_diff
 
 export belief_update
 function belief_update(env, players::Array, observations)
@@ -21,26 +18,6 @@ function belief_update(env, players::Array, observations)
 end
 
 export SDGiBS_solve_action
-<<<<<<< HEAD
-function SDGiBS_solve_action(players::Array, env) 
-    # Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
-    # for ii in eachindex(players)
-    #     Σₒ[Block(ii, ii)] .= reshape(players[ii].history[env.time][2][env.state_dim + 1:end], (env.state_dim, env.state_dim))
-    # end
-    
-    # ū = BlockVector(vcat([player.predicted_control[env.time:end] for player in players]...),
-    #                 [length(player.predicted_control[env.time:end]) for player in players])
-    ū = BlockArray(hcat([vcat([player.predicted_control[tt] for player in players]...) for tt in env.time:env.final_time - 1]...),
-                    [player.action_space for player in players], [1 for _ in env.time:env.final_time - 1])
-
-    cₖ = (x) -> [player.cost(BlockVector(x[Block(1)], [env.state_dim for _ in players])
-        , BlockVector(x[Block(2)], [p.action_space for p in players])) for player in players]
-    cₗ = (x) -> [player.final_cost(x) for player in players]
-    
-
-
-    b̄ = simulate(env, players, ū)[1]
-=======
 function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0) 
     Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
         for ii in eachindex(players)
@@ -63,7 +40,6 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 
     b̄, nominal_states = simulate(env, players, ū)
     belief_length = length(b̄[1])
->>>>>>> forward_diff
 
     @assert length(b̄) == size(ū)[2] + 1
     @assert length(b̄) == env.final_time - env.time + 1
@@ -74,23 +50,6 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
     Q_new = cost(players, b̄, ū)
 
     π = []
-<<<<<<< HEAD
-    
-    while norm(Q_new - Q_old, 2) > ϵ
-        # Bakcwards Pass
-        # β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt)
-
-        # u_b_vec = BlockVector(vcat(b̄[end], ū[end]), [length(b̄[end]), length(ū[end])])
-        # u_b_vec = BlockVector(b̄[end], [length(b̄[end])])
-        V = cₗ(b̄[end])
-        V_b = map((cᵢ) -> Enzyme.jacobian(Forward, cᵢ, b̄[end]), [player.final_cost for player in players])
-        println("---------------------------------")
-        # V_bb = Enzyme.jacobian((x) -> Enzyme.jacobian(cₗ, x), b̄[end])
-        error("holy moly it worked")
-        for tt in env.final_time:-1:env.time
-        end
-        
-=======
     c = [player.final_cost for player in players]
     ck = [(x_u) -> player.cost(x_u[1:belief_length], x_u[belief_length + 1 : end]) for player in players]
 
@@ -151,7 +110,6 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 
         # Forwards Pass
 
->>>>>>> forward_diff
 
     end
 
@@ -164,10 +122,6 @@ function simulate(env, players, ū; noise = false)
     sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in 1:env.final_time - env.time + 1]
 
     belief_length = length(players[1].history[end][2])
-<<<<<<< HEAD
-
-=======
->>>>>>> forward_diff
     b̄[1] = BlockVector(vcat([player.history[env.time][2] for player in players]...),
         [belief_length for player in players])
     sts[1] .= env.current_state
