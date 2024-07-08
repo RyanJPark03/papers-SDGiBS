@@ -64,6 +64,7 @@ function init(; L::Int = 1)
 			accel, steer = u[Block(i)]
 
 			# TODO: Find a good value for L
+			# println("steer: ", steer, " tan(steer): ", tan(steer))
 			ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
 
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
@@ -202,20 +203,26 @@ end
 # TODO: Delete
 using ForwardDiff
 function test()
-	f = (x) -> x[1] * x[2] + x[3]
+	# f = (x) -> x[1] * x[2] + x[3]
 	# f = (x) -> prod(diag(reshape(x[5:end], (2, 2))))
+	f = (x) -> test_helper(x)
 
 	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [4, 4])
 	# ^^ Breaks
-	x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [8])
+	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [8])
 	# ^^ Breaks
 	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [1, 7])
 	# x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-	A = zeros((8, 8))
+	x = [1.0 2.0; 3.0 4.0]
+	# A = zeros((8, 8))
 	# y = vec(x)
-	y = x[1:end]
-	println(typeof(y))
-	f_hessian = ForwardDiff.hessian!(A, f, y)
+	# y = x[1:end]
+	# println(typeof(y))
+	f_hessian = ForwardDiff.jacobian(f, x)
 	display(f_hessian)
+end
+
+function test_helper(x)
+	return sqrt(x)
 end
 

@@ -50,43 +50,37 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
     # TODO: need to sum player's state_dim of belief state
     ηₓ = env.state_dim * length(players)
 
+    W = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length + 1 : end]; env = env, players = players)[1]
+    g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length + 1 : end]; env = env, players = players)[2]
+    x_u = vcat(b̄[end][1:end], u_k(1)[1:end])
+
+    V = cₗ(b̄[end])
+    V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
+    V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
+
     while norm(Q_new - Q_old, 2) > ϵ
         # Bakcwards Pass
-        # β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt)
+        # x_u = vcat(b̄[end][1:end], u_k(1)[1:end])
 
-        V = cₗ(b̄[end])
-        V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
-        # V_bb = ForwardDiff.hessian(c[1], b̄[end][1:end])
-        V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
-
-
-        x_u = vcat(b̄[end][1:end], u_k(1)[1:end])
-        cost_vars = DiffResults.HessianResult(x_u)
-
-
-
-        for tt in env.final_time:-1:env.time
+        for tt in env.final_time - 1:-1:env.time
             # πₖ = ūₖ + jₖ + Kₖ * δbₖ
             # jₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
             # Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ\_b
             # TODO: update cₖ to match cₗ
-            # TODO: g, W (17-18), no dependency on player
-            # TODO
             
             x_u = vcat(b̄[tt][1:end], u_k(tt)[1:end])
-            #finding these not easy, have to refactor calculate belief_vars to take deriv
-            W = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length + 1 : end]; env = env)[1]
-            g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length + 1 : end]; env = env)[2]
-
+            Wₖ = W(x_u)
             for ii in eachindex(players)
-                # println("player, time: ", ii, ", ", tt, " f = ", env.final_time)
+                cost_vars = DiffResults.HessianResult(x_u)
                 cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
 
 
                 Q =  DiffResults.value(cost_vars) + V[ii] + .5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1 : env.state_dim])
-
+                println("calculating Wₛ")
                 Wₛ = ForwardDiff.jacobian(W, x_u)
+                println("calculating gₛ")
                 gₛ = ForwardDiff.jacobian(g, x_u)
+                println("did both derivatives")
 
                 Qₛ = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
                     sum([Wₛ[:, j]' * V_bb[ii] * Wₖ[:, j] for j in 1 : ηₓ])
@@ -177,19 +171,27 @@ function get_prefixes(b̄, prefix_length::Int)
         [prefix_length for _ in eachindex(blocks(b̄))])
 end
 
-function calculate_matrix_belief_variables(β, u; env)
-    x̂ₖ = BlockVector(vcat([β[Block(ii)][1:env.state_dim] for ii in 1:num_players]...), mean_lengths)
-    Σₖ = BlockArray{Float64}(undef, cov_lengths, cov_lengths)
+function calculate_matrix_belief_variables(β, u; env, players)
+    num_players = length(players) 
+    mean_lengths = [player.observation_space for player in players]
+    belief_lengths = [mean_lengths[ii] + mean_lengths[ii]^2 for ii in eachindex(players)]
+
+    x̂ₖ = BlockVector(vcat([β[sum(belief_lengths[1:ii - 1]) + 1 : sum(belief_lengths[1:ii])][1:env.state_dim] for ii in 1:num_players]...), mean_lengths)
+    Σₖ = BlockArray{Real}(undef, mean_lengths, mean_lengths)
     for ii in eachindex(players)
         for jj in eachindex(players)
             if ii == jj
-                Σₖ[Block(ii, jj)] .= reshape(β[Block(ii)][env.state_dim+1:end], tuple(cov_lengths...))
+                Σₖ[Block(ii, jj)] .= reshape(β[sum(belief_lengths[1:ii - 1]) + 1 : sum(belief_lengths[1:ii])][mean_lengths[ii]+1:end], tuple(mean_lengths...))
             else
-                Σₖ[Block(ii, jj)] .= zeros((cov_length, cov_length))
+                Σₖ[Block(ii, jj)] .= zeros((mean_lengths[ii], mean_lengths[jj]))
             end
         end
     end
     uₖ = BlockVector(u, [player.action_space for player in players])
+    m = BlockVector([0.0 for _ in 1:env.dynamics_noise_dim * num_players],
+                    [env.dynamics_noise_dim for _ in 1:num_players])
+    n = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players],
+                    [env.observation_noise_dim for _ in 1:num_players])
 
     f = (x) -> env.state_dynamics(
         BlockVector(x[Block(1)], mean_lengths),
@@ -200,8 +202,10 @@ function calculate_matrix_belief_variables(β, u; env)
         states = BlockVector(x[Block(1)], mean_lengths),
         m = BlockVector(x[Block(2)], [env.observation_noise_dim for _ in 1:num_players]), block = false)
 
+    # println("jacobian")
     j_cfg = JacobianConfig(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), Chunk{20}())
     f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), j_cfg)
+    # Has NaNs
     Aₖ = f_jacobian[:, 1:length(x̂ₖ)]
     Mₖ = f_jacobian[:, length(x̂ₖ) + length(uₖ)+ 1:end]
 
@@ -209,13 +213,15 @@ function calculate_matrix_belief_variables(β, u; env)
     Hₖ = h_jacobian[:, 1:length(x̂ₖ)]
     Nₖ = h_jacobian[:, length(x̂ₖ) + 1:end]
 
-    Γₖ₊₁ = Float64.(Aₖ) * Σₖ * Float64.(Aₖ') + Mₖ * Mₖ'
-    Kₖ = Γₖ₊₁ * Hₖ' * ((Float64.(Hₖ) * Γₖ₊₁ * Float64.(Hₖ') + Float64.(Nₖ) * Float64.(Nₖ')) \ I)
+    # Main.@infiltrate
+    Γₖ₊₁ = Aₖ * Matrix(Σₖ) * Aₖ' + Mₖ * Mₖ'
+    # Main.@infiltrate
+    Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
 
-    m = BlockVector([0.0 for _ in 1:env.dynamics_noise_dim * num_players],
-    [env.dynamics_noise_dim for _ in 1:num_players])
-    g = vcat(f(x̂ₖ, uₖ, m), vec(Γₖ₊₁ - Kₖ * Hₖ * Γₖ₊₁))
-    W = vcat(sqrt.(Kₖ * Hₖ * Γₖ₊₁), zeros((cov_length^2, env.state_dim)))
+    noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
+    g = vcat(noiseless_x̂ₖ₊₁, vec(Γₖ₊₁ - Kₖ * Hₖ * Γₖ₊₁))
+    Main.@infiltrate
+    W = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((sum(mean_lengths.^2), sum(mean_lengths))))
 
     return W, g, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ 
 end
@@ -265,26 +271,18 @@ function calculate_belief_variables(env, players, observations, time)
     Aₖ = f_jacobian[:, 1:length(x̂ₖ)]
     Mₖ = f_jacobian[:, length(x̂ₖ) + length(uₖ)+ 1:end]
 
-    
-
-    # Main.@infiltrate
-
     h_jacobian = ForwardDiff.jacobian(h, BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)]))
 
     Hₖ = h_jacobian[:, 1:length(x̂ₖ)]
     Nₖ = h_jacobian[:, length(x̂ₖ) + 1:end]
 
-    # Main.@infiltrate
-
     Γₖ₊₁ = Float64.(Aₖ) * Σₖ * Float64.(Aₖ') + Mₖ * Mₖ'
     Kₖ = Γₖ₊₁ * Hₖ' * ((Float64.(Hₖ) * Γₖ₊₁ * Float64.(Hₖ') + Float64.(Nₖ) * Float64.(Nₖ')) \ I)
-
 
     noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
     zeroed_env_noise = BlockVector([0.0 for _ in 1:env.observation_noise_dim * num_players], [env.observation_noise_dim for _ in eachindex(players)])
     
     temp  = env.observation_function(states = noiseless_x̂ₖ₊₁, m = zeroed_env_noise)
-    # Main.@infiltrate
     x̂ₖ₊₁ = noiseless_x̂ₖ₊₁ + Float64.(Kₖ) * (observations - temp)
     Σₖ₊₁ = (I - Kₖ * Hₖ) * Γₖ₊₁
 
@@ -296,13 +294,17 @@ function calculate_belief_variables(env, players, observations, time)
     β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(players)]...), 
                     [mean_lengths[i] + cov_lengths[i]^2 for i in eachindex(players)])
 
-    Wₖ = vcat(sqrt.(Kₖ * Hₖ * Γₖ₊₁), zeros((cov_length^2, sum(mean_lengths))))
+    a = Kₖ * Hₖ * Γₖ₊₁
+    # Main.@infiltrate
+    # Wₖ = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((cov_length^2, sum(mean_lengths))))
     # for one player
-    #Γ is state_dim x state_dim by calc
+    # Γ is state_dim x state_dim by calc
     # K is state_dim x state_dim by calc
+    #     K has negative values...
+    #     the matrix inversion introduces negative values
     # H is same by def
-    gₖ = vcat(noiseless_x̂ₖ₊₁, vec(vcat(Σₖ₊₁[Block(ii, ii)] for ii in eachindex(players))))
-    return β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block, Wₖ, gₖ
+    # gₖ = vcat(noiseless_x̂ₖ₊₁, vec(vcat(Σₖ₊₁[Block(ii, ii)] for ii in eachindex(players))))
+    return β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block
 end
 
 end
