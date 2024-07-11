@@ -96,9 +96,6 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
 
     # Got observations already
 
-    # Get updated beliefs
-    new_beliefs = SDGiBS.belief_update(env, players, observations)
-
     # Do actions
     all_actions = BlockVector{Float64}(undef, [player.action_space for player in players])
     # total_action_space = sum([player.action_space for player in players])
@@ -106,6 +103,13 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
     for ii in eachindex(players)
         player = players[ii]
         push!(player.history, [observations[Block(ii)], player.belief])
+	end
+
+	# Get updated beliefs
+    new_beliefs = SDGiBS.belief_update(env, players, observations)
+
+	for ii in eachindex(players)
+		player = players[ii]
         # push!(player.history, [observations[player.observation_space * (ii - 1) + 1 : player.observation_space * ii], player.belief])
         player.belief .= new_beliefs[Block(ii)]
         # total_prev_belief_space = sum([player.observation_space for player in players[1:ii]])

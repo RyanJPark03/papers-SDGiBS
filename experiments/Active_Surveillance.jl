@@ -48,6 +48,21 @@ function active_surveillance_demo()
 end
 
 function init(; L::Int = 1)
+	function state_dynamics(states, u, m;
+		τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true)
+	new_state = Vector{Float64}(undef, 4 * length(states))
+	for i in 1:2
+		x, y, θ, v = states[4 * (i - 1) + 1 : 4 * i]
+		accel, steer = u[2 * (i - 1) + 1 : 2 * i]
+
+		# println("steer: ", steer, " tan(steer): ", tan(steer))
+		ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
+
+		# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
+		new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[i]) * m[4 * (i - 1) + 1 : 4 * i]
+	end
+	return new_state
+end
 
 	function state_dynamics(states::BlockVector{T}, u::BlockVector, m::BlockVector;
 			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true) where T
@@ -58,6 +73,7 @@ function init(; L::Int = 1)
 		else
 			new_state = Vector{T}(undef, 4 * length(blocks(states)))
 		end
+		# println("1 :)")
 		for i in eachindex(blocks(states))
 			x, y, θ, v = states[Block(i)]
 			accel, steer = u[Block(i)]
@@ -66,12 +82,17 @@ function init(; L::Int = 1)
 			ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel] # assign 4 for Derivative# assign 2 5 for drawing
 
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
+			# println("2 :)")
 			if block
 				new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
 			else
+				# println(typeof(new_state), ", ", typeof(new_state[1]))
+				# println(new_state)
 				new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
 			end
+			# println("3 :)")
 		end
+		# println("new state: ", new_state)
 		return new_state
 	end
 
@@ -200,10 +221,13 @@ end
 
 # TODO: Delete
 using ForwardDiff
+using Zygote
+# using Enzyme
 function test()
+	# Enzyme.API.runtimeActivity!(true)
 	# f = (x) -> x[1] * x[2] + x[3]
 	# f = (x) -> prod(diag(reshape(x[5:end], (2, 2))))
-	f = (x) -> test_helper2(x)
+	f = (x) -> test_eigen(x)
 
 	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [4, 4])
 	# ^^ Breaks
@@ -216,17 +240,27 @@ function test()
 	# y = vec(x)
 	# y = x[1:end]
 	# println(typeof(y))
-	# f_hessian = ForwardDiff.jacobian(f, x)
-	f_hessian = Enzyme.jacobian(Reverse, f, x, Val(2))
-	display(f_hessian)
+	f_jacobian = Zygote.jacobian(f, x) # Doesn't have schur or eigen implemented
+	# f_jacobian = Enzyme.jacobian(Reverse, f, x, Val(2)) # takes too many resources, sigkilled by OS or No augmented forward pass found for dgeevx_64_
+	display(f_jacobian)
 end
 
 function test_helper(x)
-	return sqrt(x)
+	return sqrt(x) # schur doesn't work (FwdD)
 end
 
-function test_helper2(x)
-	V = eigvecs(x)
+function test_eigen(x)
+	V = eigvecs(x) # no eigen implementation (FwdD)
 	Q = Diagonal(eigvals(x))
 	return V * Q * (V\I)
 end
+
+
+function e(A)
+	X, Δ = eig(A)
+	return X * sqrt.(Δ) * (X \ I)
+end
+
+# Can try power series...
+
+#
