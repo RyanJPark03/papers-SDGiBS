@@ -3,7 +3,7 @@ function finite_diff(f, x; ϵ = 1e-8)
     num_dimensions = length(x)
     unperturbed_slice = f(x)
     slice_size = size(unperturbed_slice)
-    grad::Array{ComplexF64} = Complex.(zeros(tuple(slice_size..., num_dimensions)))
+    grad = zeros(tuple(slice_size..., num_dimensions))
 
     n = norm(x)
 

@@ -10,7 +10,7 @@ export player_type
 end
 
 export player
-struct player{}
+mutable struct player{}
 	player_type::player_type
 	player_id::Int
 	belief::Vector{Float64}
@@ -76,13 +76,14 @@ function init_player(;
 end
 
 function handle_SDGiBS_action(players::Array{player}, env::base_environment,
-	current_player_index::Int)
+	current_player_index::Int, time::Int = 1)
     # probably no π
-	(b̄, ū, π) = SDGiBS_solve_action(players, env)
+	(b̄, ū, π) = SDGiBS_solve_action(players, env, time)
 	players[current_player_index].predicted_belief = b̄
 	players[current_player_index].predicted_control = ū
 	players[current_player_index].feedback_law = π
-    return players[current_player_index].predicted_control[env.time]
+	println("almost done")
+    return players[current_player_index].predicted_control[1]
 end
 
 export time_step_all
@@ -116,7 +117,10 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
 
         # total_prev_action_space = sum([player.action_space for player in players[1:ii]])
         if player.player_type == type_SDGiBS
-            all_actions[Block(ii)] .= handle_SDGiBS_action(players, env, ii)
+			println("try : ", ii)
+			temp = handle_SDGiBS_action(players, env, ii, env.time)
+			# Main.@infiltrate
+            all_actions[Block(ii)] .= temp[Block(ii)]
             # all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space] = handle_SDGiBS_action(players, env, ii)
             # all_actions
         else

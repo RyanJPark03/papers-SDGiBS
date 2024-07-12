@@ -40,6 +40,9 @@ function active_surveillance_demo()
 	coords1 = vcat([x[Block(1)][1:2] for x in trajectory]...)
 	coords2 = vcat([x[Block(2)][1:2] for x in trajectory]...)
 
+	println("coords1: ", coords1)
+	println("coords2: ", coords2)
+
 	# fig = Figure()
 	# ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
 	# lines!(ax, coords1, color = :blue)

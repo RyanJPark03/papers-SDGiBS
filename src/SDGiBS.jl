@@ -16,23 +16,22 @@ function belief_update(env, players::Array, observations)
 end
 
 export SDGiBS_solve_action
-function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
+function SDGiBS_solve_action(players::Array, env, time; μᵦ = 1.0, μᵤ = 1.0, ϵ = 1e-10)
 	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
 	for ii in eachindex(players)
-        player = players[ii]
-        println("cov: ", player.history[env.time][2][player.observation_space+1:end])
+		player = players[ii]
 		Σₒ[Block(ii, ii)] .= reshape(player.history[env.time][2][player.observation_space+1:end], (player.observation_space, player.observation_space))
 	end
 
-	ū = BlockArray(hcat([vcat([player.predicted_control[tt] for player in players]...) for tt in env.time:env.final_time-1]...),
-		[player.action_space for player in players], [1 for _ in env.time:env.final_time-1])
+	ū = BlockArray(hcat([vcat([player.predicted_control[tt] for player in players]...) for tt in time:env.final_time - 1]...),
+		[player.action_space for player in players], [1 for _ in time:env.final_time - 1]) #TODO: why a block array? use an array of block vectors
 
 	action_length = [player.action_space for player in players]
 	u_k = (tt) -> (tt == env.final_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
-				  BlockVector(vcat([vec(ū[Block(ii, tt - env.time + 1)]) for ii in eachindex(players)]...), action_length)
-	x_k = (tt) -> BlockVector(vcat([player.predicted_belief[tt-env.time+1][1:env.state_dim] for player in players]...), [env.state_dim for player in players])
+				  BlockVector(vcat([vec(ū[Block(ii, tt - time + 1)]) for ii in eachindex(players)]...), action_length)
+	x_k = (tt) -> BlockVector(vcat([player.predicted_belief[tt-time+1][1:env.state_dim] for player in players]...), [env.state_dim for player in players])
 
-	b̄, nominal_states = simulate(env, players, ū)
+	b̄, _, _ = simulate(env, players, ū, nothing, env.time)
 	belief_length = length(b̄[1])
 
 	@assert length(b̄) == size(ū)[2] + 1
@@ -40,10 +39,9 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 
 	# Iteration variables
 	Q_old = [Inf for _ in eachindex(players)]
-	ϵ = 1e-5
 	Q_new = cost(players, b̄, ū)
 
-	π = []
+	π::Array{Function} = [() -> zero(sum(action_length)) for _ in time:env.final_time-1]
 	c = [player.final_cost for player in players]
 	ck = [(x_u) -> player.cost(x_u[1:belief_length], x_u[belief_length+1:end]) for player in players]
 
@@ -60,7 +58,7 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 	while norm(Q_new - Q_old, 2) > ϵ
 		# Bakcwards pass
 
-		for tt in env.final_time-1:-1:env.time
+		for tt in env.final_time-1:-1:time
 			# πₖ = ūₖ + jₖ + Kₖ * δbₖ
 			# jₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
 			# Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ\_b
@@ -68,42 +66,41 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 			x_u = vcat(b̄[tt][1:end], u_k(tt)[1:end])
 			Wₖ = W(x_u)
 			for ii in eachindex(players)
+                println("player index: ", ii, ", time: ", tt)
 				cost_vars = DiffResults.HessianResult(x_u)
-                # Main.@infiltrate
 				cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
 
-                println("player index: ", ii, " , time: ", tt)
-                
-                # Main.@infiltrate
-                Wₛ = finite_diff(W, x_u) # TODO: solve for Wₛ using Lyapunov, make A = -A?
-                # Wₛ = [zeros(size(Wₖ)) for _ in 1 : length(x_u)]
+				Wₛ = finite_diff(W, x_u) # TODO: solve for Wₛ using Lyapunov, make A = -A
 				gₛ = ForwardDiff.jacobian(g, x_u)
 
-				Q = DiffResults.value(cost_vars) + V[ii] + 
-                    0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:env.state_dim])
+				Q = DiffResults.value(cost_vars) + V[ii] +
+					0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:env.state_dim])
 
 				Qₛ = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
-                    sum([Wₛ[:, j, :]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
-					
-                Q_b = Qₛ[1 : belief_length, :]
+					 sum([Wₛ[:, j, :]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
+
+				Q_b = Qₛ[1:belief_length, :]
 				Q_u = Qₛ[belief_length+1:end, :] # skip elems wrt belief
 
 				# Belief regularizatin: (V_bb[ii] + μ * I) instead of V_bb[ii]
 				Qₛₛ = DiffResults.hessian(cost_vars) + gₛ' * (V_bb[ii] + μᵦ * I) * gₛ +
-					sum([Wₛ[:, j, :]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, j, :] for j in 1:ηₓ])
-                
-                Q_bb = Qₛₛ[1:belief_length, 1:belief_length]
+					  sum([Wₛ[:, j, :]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, j, :] for j in 1:ηₓ])
+
+				Q_bb = Qₛₛ[1:belief_length, 1:belief_length]
 				# Control regularization
 				Q_ub = Qₛₛ[belief_length+1:end, 1:belief_length]
 				Q_uu = Qₛₛ[belief_length+1:end, belief_length+1:end] + μᵤ * I
 
-                jₖ = -Q_uu \ Q_u
-                Kₖ = -Q_uu \ Q_ub # overloaded notation, Kₖ has a different value in belief update
-
-				players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] + jₖ + Kₖ * δb
+				jₖ = -Q_uu \ Q_u
+				Kₖ = -Q_uu \ Q_ub # overloaded notation, Kₖ has a different value in belief update
+				# Main.@infiltrate
 
                 # Main.@infiltrate
-				V[ii] = Q + (Q_u' * jₖ)[1, 1] + (0.5 * jₖ' * Q_uu * jₖ)[1, 1]
+				# players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] + jₖ + Kₖ * δb
+				π[tt] = (δb) -> Vector(u_k(tt)) + jₖ + Kₖ * δb
+
+				# Main.@infiltrate
+				V[ii] = Q + (Q_u'*jₖ)[1, 1] + (0.5*jₖ'*Q_uu*jₖ)[1, 1]
 				V_b[ii] .= Q_b + Kₖ' * Q_uu * jₖ + Kₖ' * Q_u + Q_ub' * jₖ
 				V_bb[ii] = Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
 			end
@@ -112,11 +109,11 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 		# Forwards Pass
 		if Q_new <= Q_old
 			Q_old = Q_new
-			# TODO: Update b̄, ū
-            error("b̄, ū update not implemented")
+			b̄, ū, _ = simulate(env, players, π, b̄, time)
+            println("len b: ", size(b̄), ", len u: ", size(ū))
 			μᵤ *= 0.1
 			μᵦ *= 0.1
-		else
+		else # TODO: make sure we exit if regularization too large
 			μᵤ *= 10
 			μᵦ *= 10
 		end
@@ -124,40 +121,46 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 	return b̄, ū, π
 end
 
-function simulate(env, players, ū; noise = false)
-	b̄ = [BlockVector{Float64}(undef, [env.state_dim + env.state_dim^2 for _ in eachindex(players)]) for _ in 1:env.final_time-env.time+1]
-	sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in 1:env.final_time-env.time+1]
+function simulate(env, players, ū, b̄, time; noise = false)
+	b̄_new = [BlockVector{Float64}(undef, [env.state_dim + env.state_dim^2 for _ in eachindex(players)]) for _ in time:env.final_time]
+	sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in time:env.final_time]
+	ū_new = [BlockVector{Float64}(undef, [player.action_space for player in players]) for _ in time:env.final_time-1]
 
 	belief_length = length(players[1].history[end][2])
-	b̄[1] = BlockVector(vcat([player.history[env.time][2] for player in players]...),
+	b̄_new[1] = BlockVector(vcat([player.history[env.time][2] for player in players]...),
 		[belief_length for player in players])
 	sts[1] .= env.current_state
 
 	dynamics_noise = BlockVector(zeros(env.dynamics_noise_dim * length(players)), [env.dynamics_noise_dim for _ in 1:length(players)])
 	observation_noise = BlockVector(zeros(env.observation_noise_dim * length(players)), [env.observation_noise_dim for _ in 1:length(players)])
 
-	for tt in 1:env.final_time-env.time
-		# belief_st = get_prefixes(b̄[tt], env.state_dim)
-		actual_time = tt + env.time - 1
-		action = BlockVector(vec(vcat([ū[Block(i, actual_time)] for i in eachindex(players)]...)),
-			[player.action_space for player in players])
+	# Main.@infiltrate
+	for tt in time:env.final_time - 1
+		if typeof(ū) == Vector{Function}
+			# TODO: getting complex numbers
+			ū_new[tt-time+1] = BlockVector(vec(ū[tt-time+1](b̄_new[tt-time+1] - b̄[tt-time+1])), [player.action_space for player in players])
+		else
+			ū_new[tt-time+1] = BlockVector(vec(vcat([ū[Block(i, tt-time+1)] for i in eachindex(players)]...)),
+				[player.action_space for player in players])
+		end
 
 		if noise
 			dynamics_noise .= [rand(Distributions.Normal()) for _ in 1:env.dynamics_noise_dim*length(players)]
 			observation_noise .= [rand(Distributions.Normal()) for _ in 1:env.observation_noise_dim*length(players)]
 		end
-		sts[tt+1] .= env.state_dynamics(sts[tt], action, dynamics_noise)
+
+		sts[tt+1] .= env.state_dynamics(sts[tt], ū_new[tt-time+1], dynamics_noise)
 		observations = env.observation_function(states = sts[tt+1], m = observation_noise)
 
-		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, actual_time)
+		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt-time+1)
 		temp = []
 		for ii in eachindex(players)
 			temp = vcat(temp, vcat(x̂ₖ₊₁[Block(ii)], vec(Σₖ₊₁[Block(ii, ii)])))
 		end
-		b̄[tt+1] .= temp
+		b̄_new[tt+1] .= temp
 	end
 
-	return b̄, sts
+	return b̄_new, ū_new, sts
 end
 
 function cost(players, b, u)
@@ -205,7 +208,8 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 	m = [0.0 for _ in 1:env.dynamics_noise_dim*num_players]
 	n = [0.0 for _ in 1:env.observation_noise_dim*num_players]
 
-	f = (x) -> env.state_dynamics(
+	f =
+		(x) -> env.state_dynamics(
 			BlockVector(x[1:length(x̂ₖ)], mean_lengths),
 			BlockVector(x[length(x̂ₖ)+1:length(x̂ₖ)+length(uₖ)], [player.action_space for player in players]),
 			BlockArray(x[length(x̂ₖ)+length(uₖ)+1:end], [env.dynamics_noise_dim for _ in 1:num_players]), block = false)
@@ -228,20 +232,20 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 
 	# Main.@infiltrate
 	Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
-	Main.@infiltrate
+	# Main.@infiltrate
 	Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
 
 	noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
-    temp = BlockArray(Γₖ₊₁ - Kₖ * Hₖ * Γₖ₊₁, mean_lengths, mean_lengths)
-    covs = [Matrix(temp[Block(ii, ii)]) for ii in eachindex(players)]
-    means = [noiseless_x̂ₖ₊₁[sum(mean_lengths[1 : ii - 1]) + 1 : sum(mean_lengths[1 : ii])] for ii in eachindex(players)]
+	temp = BlockArray(Γₖ₊₁ - Kₖ * Hₖ * Γₖ₊₁, mean_lengths, mean_lengths)
+	covs = [Matrix(temp[Block(ii, ii)]) for ii in eachindex(players)]
+	means = [noiseless_x̂ₖ₊₁[sum(mean_lengths[1:ii-1])+1:sum(mean_lengths[1:ii])] for ii in eachindex(players)]
 	g = vcat(vcat(means...), vcat([vec(covs[ii]) for ii in eachindex(covs)]...))
-    # Main.@infiltrate
-    if calc_W
-	    W = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((sum(mean_lengths .^ 2), sum(mean_lengths))))
-    else
-        W = nothing
-    end
+	# Main.@infiltrate
+	if calc_W
+		W = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((sum(mean_lengths .^ 2), sum(mean_lengths))))
+	else
+		W = nothing
+	end
 
 	return W, g, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ
 end
