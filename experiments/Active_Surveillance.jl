@@ -48,9 +48,9 @@ function active_surveillance_demo()
 end
 
 function init(; L::Int = 1)
-	function state_dynamics(states, u, m;
-		τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true)
-	new_state = Vector{Float64}(undef, 4 * length(states))
+	function state_dynamics(states::Vector{T}, u, m;
+		τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true) where T
+	new_state = Vector{T}(undef, length(states))
 	for i in 1:2
 		x, y, θ, v = states[4 * (i - 1) + 1 : 4 * i]
 		accel, steer = u[2 * (i - 1) + 1 : 2 * i]

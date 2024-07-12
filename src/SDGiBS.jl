@@ -2,18 +2,13 @@ module SDGiBS
 
 using BlockArrays
 using LinearAlgebra
-# using Enzyme
 using Distributions
-using Tullio
-# using Tracker
-using Zygote
-
-# Enzyme.API.runtimeActivity!(true)
-# Enzyme.API.strictAliasing!(false)
 
 using ForwardDiff, DiffResults
 using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 using Distributions
+
+include("FiniteDiff.jl")
 
 export belief_update
 function belief_update(env, players::Array, observations)
@@ -58,7 +53,7 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 	ηₓ = sum([player.observation_space for player in players])
 
 	W = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players)[1]
-	g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players)[2]
+	g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players, calc_W = false)[2]
 	x_u = vcat(b̄[end][1:end], u_k(1)[1:end])
 
 	V = cₗ(b̄[end])
@@ -73,7 +68,6 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 			# πₖ = ūₖ + jₖ + Kₖ * δbₖ
 			# jₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
 			# Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ\_b
-			# TODO: update cₖ to match cₗ
 
 			x_u = vcat(b̄[tt][1:end], u_k(tt)[1:end])
 			Wₖ = W(x_u)
@@ -82,28 +76,27 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 				cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
 
 				Q = DiffResults.value(cost_vars) + V[ii] + 0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:env.state_dim])
-				println("calculating Wₛ")
-				# Wₛ = ForwardDiff.jacobian(W, x_u)
 				# Main.@infiltrate
-				Wₛ = Zygote.jacobian((x) -> W(x), x_u)
-				# Wₛ = Tensors.gradient(W, Tensor{1, length(x_u)}(x_u)) # doesn't work, doesn't support rank 3, doesn't support dim > 4
-				# Wₛ = Enzyme.jacobian(Reverse, W, x_u, Val(belief_length))
-				println("calculating gₛ")
+				Wₛ = finite_diff(W, x_u)
+                # Wₛ = I
 				gₛ = ForwardDiff.jacobian(g, x_u)
-				println("did both derivatives")
-
-				Qₛ = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
-					 sum([Wₛ[:, j]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
+                # gₛ = I
+                temp_sum_1 = sum(vcat([vcat(Wₛ[:,:, j]' * V_bb[ii] * Wₖ[:, j], zeros(size(Wₛ[:, :, 1])[1] - size(Wₛ[:, :, 1])[2])) for j in 1:ηₓ]))
+                Main.@infiltrate
+				Qₛ = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] + temp_sum_1
+                    # Getting this is an 8 element vector for each state var, but need 40 (for cov) would make sense if state dyn output was x and cov...
+					# sum([Wₛ[:,:, j]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
+					
 				Q_u = Qₛ[belief_length+1:end, :] # skip elems wrt belief
 
 				# Belief regularizatin: (V_bb[ii] + μ * I) instead of V_bb[ii]
 				Qₛₛ = DiffResults.hessian(cost_vars) + gₛ' * (V_bb[ii] + μᵦ * I) * gₛ +
-					  sum([Wₛ[:, j]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, j] for j in 1:ηₓ])
+					  sum([Wₛ[:,:, j]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, :, j] for j in 1:ηₓ])
 				# Control regularization
 				Q_ub = Qₛₛ[belief_length+1:end, 1:belief_length] + μᵤ * I
 				Q_uu = Q_ss[belief_length+1:end, belief_length+1:end]
 
-				players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] - (Q_uu \ Q_u) - (Q_uu \ Q_ub) * δb
+				players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] - Q_uu \ (Q_u + Q_ub * δb)
 
 				jₖ = -Q_uu \ Q_u
 				V[ii] = Q + Q_u * jₖ' + 0.5 * jₖ' * Q_uu * jₖ
@@ -116,6 +109,7 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 		if Q_new <= Q_old
 			Q_old = Q_new
 			# TODO: Update b̄, ū
+            error("b̄, ū update not implemented")
 			μᵤ *= 0.1
 			μᵦ *= 0.1
 		else
@@ -180,13 +174,12 @@ function cost(players, b, u)
 	return Q
 end
 
-
 function get_prefixes(b̄, prefix_length::Int)
 	return BlockVector(vcat([b̄[Block(ii)][1:prefix_length] for ii in eachindex(blocks(b̄))]...),
 		[prefix_length for _ in eachindex(blocks(b̄))])
 end
 
-function calculate_matrix_belief_variables(β, u; env, players)
+function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 	num_players = length(players)
 	mean_lengths = [player.observation_space for player in players]
 	belief_lengths = [mean_lengths[ii] + mean_lengths[ii]^2 for ii in eachindex(players)]
@@ -208,8 +201,7 @@ function calculate_matrix_belief_variables(β, u; env, players)
 	m = [0.0 for _ in 1:env.dynamics_noise_dim*num_players]
 	n = [0.0 for _ in 1:env.observation_noise_dim*num_players]
 
-	f =
-		(x) -> env.state_dynamics(
+	f = (x) -> env.state_dynamics(
 			BlockVector(x[1:length(x̂ₖ)], mean_lengths),
 			BlockVector(x[length(x̂ₖ)+1:length(x̂ₖ)+length(uₖ)], [player.action_space for player in players]),
 			BlockArray(x[length(x̂ₖ)+length(uₖ)+1:end], [env.dynamics_noise_dim for _ in 1:num_players]), block = false)
@@ -218,20 +210,14 @@ function calculate_matrix_belief_variables(β, u; env, players)
 		states = BlockVector(x[1:length(x̂ₖ)], mean_lengths),
 		m = BlockVector(x[length(x̂ₖ)+1:end], [env.observation_noise_dim for _ in 1:num_players]), block = false)
 
-	println("jacobian")
 	# j_cfg = JacobianConfig(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), Chunk{20}())
 
 	f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]))
-	# y = vcat([x̂ₖ, uₖ, m]...)
-	# println("calculating")
-	# f_jacobian = Zygote.jacobian(f, y)
 	# Has NaNs
 	Aₖ = f_jacobian[:, 1:length(x̂ₖ)]
 	Mₖ = f_jacobian[:, length(x̂ₖ)+length(uₖ)+1:end]
 
 	h_jacobian = ForwardDiff.jacobian(h, BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)]))
-	# y_1 = vcat([x̂ₖ, n]...)
-	# h_jacobian = Zygote.jacobian(h, y_1)
 	Hₖ = h_jacobian[:, 1:length(x̂ₖ)]
 	Nₖ = h_jacobian[:, length(x̂ₖ)+1:end]
 
@@ -242,9 +228,16 @@ function calculate_matrix_belief_variables(β, u; env, players)
 	Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
 
 	noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
-	g = vcat(noiseless_x̂ₖ₊₁, vec(Γₖ₊₁ - Kₖ * Hₖ * Γₖ₊₁))
-	# Main.@infiltrate
-	W = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((sum(mean_lengths .^ 2), sum(mean_lengths))))
+    temp = BlockArray(Γₖ₊₁ - Kₖ * Hₖ * Γₖ₊₁, mean_lengths, mean_lengths)
+    covs = [Matrix(temp[Block(ii, ii)]) for ii in eachindex(players)]
+    means = [noiseless_x̂ₖ₊₁[sum(mean_lengths[1 : ii - 1]) + 1 : sum(mean_lengths[1 : ii])] for ii in eachindex(players)]
+	g = vcat(vcat(means...), vcat([vec(covs[ii]) for ii in eachindex(covs)]...))
+    # Main.@infiltrate
+    if calc_W
+	    W = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((sum(mean_lengths .^ 2), sum(mean_lengths))))
+    else
+        W = nothing
+    end
 
 	return W, g, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ
 end
