@@ -156,8 +156,8 @@ end
 		0.0 0.0 .06 0.0;
 		0.0 0.0 0.0 1.0;
 	]
-	initial_beliefs[Block(1)] .= vcat(initial_state[Block(1)], vec(initial_cov_matrix))
-	initial_beliefs[Block(2)] .= vcat(initial_state[Block(2)], vec(initial_cov_matrix))
+	initial_beliefs[Block(1)] .= vcat(initial_state[Block(1)], vec(copy(initial_cov_matrix)))
+	initial_beliefs[Block(2)] .= vcat(initial_state[Block(2)], vec(copy(initial_cov_matrix)))
 
 	function cₖ¹(β, u)
 		R = Matrix(0.1 * I, 2, 2)
@@ -189,9 +189,13 @@ end
 			return norm(β[1:2] - β[Int(length(β)//2 + 1):Int(length(β)//2 + 2)], 2)
 		end
 	end
-	function cₖ²(β, u)
+	function cₖ²(β::T, u::T) where T
 		R = Matrix(0.1 * I, 2, 2)
-		return u[Block(2)]' * R * u[Block(2)] + α₁(β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
+		if typeof(β) == BlockVector
+			return u[Block(2)]' * R * u[Block(2)] + α₁ * (β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
+		else 
+			return u[3:end]' * R * u[3:end] + α₁ * (β[Int(length(β)//2 + 4)] - vₖ_des)^2 + α₂ * c_coll(β)
+		end
 	end
 
 	function cₗ²(β)
@@ -221,7 +225,7 @@ end
 
 # TODO: Delete
 using ForwardDiff
-using Zygote
+# using Zygote
 # using Enzyme
 function test()
 	# Enzyme.API.runtimeActivity!(true)
@@ -240,7 +244,7 @@ function test()
 	# y = vec(x)
 	# y = x[1:end]
 	# println(typeof(y))
-	f_jacobian = Zygote.jacobian(f, x) # Doesn't have schur or eigen implemented
+	# f_jacobian = Zygote.jacobian(f, x) # Doesn't have schur or eigen implemented
 	# f_jacobian = Enzyme.jacobian(Reverse, f, x, Val(2)) # takes too many resources, sigkilled by OS or No augmented forward pass found for dgeevx_64_
 	display(f_jacobian)
 end

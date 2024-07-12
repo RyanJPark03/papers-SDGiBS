@@ -24,7 +24,7 @@ struct player{}
     observation_space::Int
 	# SDGiBS specific
 	predicted_belief::Vector{Vector{Float64}}
-	predicted_control::Vector{Vector{Float64}}
+	predicted_control::Vector{Any}
 	feedback_law::Any
 end
 
@@ -52,7 +52,6 @@ function init_player(;
 	belief_updater::Function = (player::player, observation::Vector{Float64}) ->
 		belief_update(player.belief, observation)
 	action_selector::Function = () -> true
-
 	predicted_belief = [copy(belief) for _ in 1:time+1]
 	predicted_control = [copy(default_action) for _ in 1:time]
 	feedback_law = nothing
@@ -70,8 +69,8 @@ function init_player(;
 		return nothing
 	end
 
-	player(player_type, player_id, belief, cost, final_cost,
-    [[nothing, belief, default_action]], belief_updater, action_selector,
+	player(player_type, player_id, copy(belief), cost, final_cost,
+    [[nothing, copy(belief), default_action]], belief_updater, action_selector,
     action_space, observation_space, predicted_belief, predicted_control,
     feedback_law)
 end
@@ -94,7 +93,7 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
     # update all beliefs
     # temporarily store all new beliefs
 
-    # Got observations already
+    # Got observations already#TODO: order wrong probably
 
     # Do actions
     all_actions = BlockVector{Float64}(undef, [player.action_space for player in players])

@@ -19,7 +19,9 @@ export SDGiBS_solve_action
 function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
 	for ii in eachindex(players)
-		Σₒ[Block(ii, ii)] .= reshape(players[ii].history[env.time][2][env.state_dim+1:end], (env.state_dim, env.state_dim))
+        player = players[ii]
+        println("cov: ", player.history[env.time][2][player.observation_space+1:end])
+		Σₒ[Block(ii, ii)] .= reshape(player.history[env.time][2][player.observation_space+1:end], (player.observation_space, player.observation_space))
 	end
 
 	ū = BlockArray(hcat([vcat([player.predicted_control[tt] for player in players]...) for tt in env.time:env.final_time-1]...),
@@ -29,11 +31,6 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 	u_k = (tt) -> (tt == env.final_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
 				  BlockVector(vcat([vec(ū[Block(ii, tt - env.time + 1)]) for ii in eachindex(players)]...), action_length)
 	x_k = (tt) -> BlockVector(vcat([player.predicted_belief[tt-env.time+1][1:env.state_dim] for player in players]...), [env.state_dim for player in players])
-
-	cₖ = (x) -> [player.cost(BlockVector(x[Block(1)], [env.state_dim for _ in players]), BlockVector(x[Block(2)], [p.action_space for p in players])) for player in players]
-	cₗ = (x) -> [player.final_cost(x) for player in players]
-
-
 
 	b̄, nominal_states = simulate(env, players, ū)
 	belief_length = length(b̄[1])
@@ -56,13 +53,12 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 	g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players, calc_W = false)[2]
 	x_u = vcat(b̄[end][1:end], u_k(1)[1:end])
 
-	V = cₗ(b̄[end])
+	V = map((cᵢ) -> cᵢ(b̄[end]), c)
 	V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
 	V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
 
 	while norm(Q_new - Q_old, 2) > ϵ
-		# Bakcwards Pass
-		# x_u = vcat(b̄[end][1:end], u_k(1)[1:end])
+		# Bakcwards pass
 
 		for tt in env.final_time-1:-1:env.time
 			# πₖ = ūₖ + jₖ + Kₖ * δbₖ
@@ -73,34 +69,42 @@ function SDGiBS_solve_action(players::Array, env; μᵦ = 1.0, μᵤ = 1.0)
 			Wₖ = W(x_u)
 			for ii in eachindex(players)
 				cost_vars = DiffResults.HessianResult(x_u)
+                # Main.@infiltrate
 				cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
 
-				Q = DiffResults.value(cost_vars) + V[ii] + 0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:env.state_dim])
-				# Main.@infiltrate
-				Wₛ = finite_diff(W, x_u)
-                # Wₛ = I
+                println("player index: ", ii, " , time: ", tt)
+                
+                # Main.@infiltrate
+                Wₛ = finite_diff(W, x_u) # TODO: solve for Wₛ using Lyapunov, make A = -A?
+                # Wₛ = [zeros(size(Wₖ)) for _ in 1 : length(x_u)]
 				gₛ = ForwardDiff.jacobian(g, x_u)
-                # gₛ = I
-                temp_sum_1 = sum(vcat([vcat(Wₛ[:,:, j]' * V_bb[ii] * Wₖ[:, j], zeros(size(Wₛ[:, :, 1])[1] - size(Wₛ[:, :, 1])[2])) for j in 1:ηₓ]))
-                Main.@infiltrate
-				Qₛ = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] + temp_sum_1
-                    # Getting this is an 8 element vector for each state var, but need 40 (for cov) would make sense if state dyn output was x and cov...
-					# sum([Wₛ[:,:, j]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
+
+				Q = DiffResults.value(cost_vars) + V[ii] + 
+                    0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:env.state_dim])
+
+				Qₛ = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
+                    sum([Wₛ[:, j, :]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
 					
+                Q_b = Qₛ[1 : belief_length, :]
 				Q_u = Qₛ[belief_length+1:end, :] # skip elems wrt belief
 
 				# Belief regularizatin: (V_bb[ii] + μ * I) instead of V_bb[ii]
 				Qₛₛ = DiffResults.hessian(cost_vars) + gₛ' * (V_bb[ii] + μᵦ * I) * gₛ +
-					  sum([Wₛ[:,:, j]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, :, j] for j in 1:ηₓ])
+					sum([Wₛ[:, j, :]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, j, :] for j in 1:ηₓ])
+                
+                Q_bb = Qₛₛ[1:belief_length, 1:belief_length]
 				# Control regularization
-				Q_ub = Qₛₛ[belief_length+1:end, 1:belief_length] + μᵤ * I
-				Q_uu = Q_ss[belief_length+1:end, belief_length+1:end]
+				Q_ub = Qₛₛ[belief_length+1:end, 1:belief_length]
+				Q_uu = Qₛₛ[belief_length+1:end, belief_length+1:end] + μᵤ * I
 
-				players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] - Q_uu \ (Q_u + Q_ub * δb)
+                jₖ = -Q_uu \ Q_u
+                Kₖ = -Q_uu \ Q_ub # overloaded notation, Kₖ has a different value in belief update
 
-				jₖ = -Q_uu \ Q_u
-				V[ii] = Q + Q_u * jₖ' + 0.5 * jₖ' * Q_uu * jₖ
-				V_b[ii] = Q_b + Kₖ' * Q_uu * jₖ + Kₖ' * Q_u + Q_ub' * jₖ
+				players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] + jₖ + Kₖ * δb
+
+                # Main.@infiltrate
+				V[ii] = Q + (Q_u' * jₖ)[1, 1] + (0.5 * jₖ' * Q_uu * jₖ)[1, 1]
+				V_b[ii] .= Q_b + Kₖ' * Q_uu * jₖ + Kₖ' * Q_u + Q_ub' * jₖ
 				V_bb[ii] = Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
 			end
 		end
@@ -224,7 +228,7 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 
 	# Main.@infiltrate
 	Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
-	# Main.@infiltrate
+	Main.@infiltrate
 	Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
 
 	noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
