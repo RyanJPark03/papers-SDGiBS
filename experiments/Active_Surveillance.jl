@@ -26,15 +26,18 @@ function active_surveillance_demo()
 	motion_noise = 1.0
 
     for tt in 1:demo.env.final_time
+		println("Planning at time: ", tt)
         # time_step could return a block vector already, not entirely sure
+		Main.@infiltrate
 		m = BlockVector(vcat([rand(-motion_noise:motion_noise, demo.env.observation_noise_dim) for _ in 1:demo.env.num_agents]...),
 						[demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
-		observations = demo.env.observation_function(;states=demo.env.current_state,
+		observations = demo.env.observation_function(;states=BlockVector(demo.env.current_state, [4, 4]),
 				m = m)
         # controls = BlockVector(time_step_all(demo.players, demo.env, observations(demo.env)))
-		controls = BlockVector(time_step_all(demo.players, demo.env, observations))
+		controls = time_step_all(demo.players, demo.env, observations)
+		
         push!(trajectory, unroll(demo.env, controls, 1;
-            noise=Vector{Float64}([(Distributions.Normal() - .5) * motion_noise for _ in 1:2]))...)
+            noise=Vector{Float64}((rand(Distributions.Normal(), 8) .- .5) .* motion_noise)))
     end
 	
 	coords1 = vcat([x[Block(1)][1:2] for x in trajectory]...)
@@ -221,53 +224,8 @@ end
 		action_space = 2,
 		observation_space = 4,
 		default_action = [0.0, 0.5],# accel, steer
-		time = 20) for i in 1:2]
+		time = 20,
+		num_players = 2) for i in 1:2]
 
 	return surveillance_demo(env, players)
 end
-
-# TODO: Delete
-using ForwardDiff
-# using Zygote
-# using Enzyme
-function test()
-	# Enzyme.API.runtimeActivity!(true)
-	# f = (x) -> x[1] * x[2] + x[3]
-	# f = (x) -> prod(diag(reshape(x[5:end], (2, 2))))
-	f = (x) -> test_eigen(x)
-
-	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [4, 4])
-	# ^^ Breaks
-	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [8])
-	# ^^ Breaks
-	# x = BlockVector([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [1, 7])
-	# x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-	x = (1/5) .* [59.0 0.0; 12 75]
-	# A = zeros((8, 8))
-	# y = vec(x)
-	# y = x[1:end]
-	# println(typeof(y))
-	# f_jacobian = Zygote.jacobian(f, x) # Doesn't have schur or eigen implemented
-	# f_jacobian = Enzyme.jacobian(Reverse, f, x, Val(2)) # takes too many resources, sigkilled by OS or No augmented forward pass found for dgeevx_64_
-	display(f_jacobian)
-end
-
-function test_helper(x)
-	return sqrt(x) # schur doesn't work (FwdD)
-end
-
-function test_eigen(x)
-	V = eigvecs(x) # no eigen implementation (FwdD)
-	Q = Diagonal(eigvals(x))
-	return V * Q * (V\I)
-end
-
-
-function e(A)
-	X, Δ = eig(A)
-	return X * sqrt.(Δ) * (X \ I)
-end
-
-# Can try power series...
-
-#

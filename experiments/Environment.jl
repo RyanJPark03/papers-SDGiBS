@@ -1,6 +1,6 @@
 # using BlockArrays
 
-struct base_environment{}
+mutable struct base_environment{}
 	state_dynamics::Function
 	observation_function::Function
 	num_agents::Int
@@ -47,7 +47,7 @@ function unroll(env::base_environment, actions, time_steps::Int;
 	states::Array{Vector{Float64}} = [[] for _ in 1:time_steps+1]
 	states[1] = env.current_state
 	for tt in 2:time_steps+1
-        if !isnothing(nosie)
+        if !isnothing(noise)
             states[tt] = env.state_dynamics(states[tt-1], actions, noise)
         else
             states[tt] = env.state_dynamics(states[tt-1], actions)

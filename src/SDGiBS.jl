@@ -22,14 +22,17 @@ function SDGiBS_solve_action(players::Array, env, time; μᵦ = 1.0, μᵤ = 1.0
 		player = players[ii]
 		Σₒ[Block(ii, ii)] .= reshape(player.history[env.time][2][player.observation_space+1:end], (player.observation_space, player.observation_space))
 	end
-
-	ū = BlockArray(hcat([vcat([player.predicted_control[tt] for player in players]...) for tt in time:env.final_time - 1]...),
-		[player.action_space for player in players], [1 for _ in time:env.final_time - 1]) #TODO: why a block array? use an array of block vectors
+	temp = 
+		vcat([hcat([player.predicted_control[tt][Block(player.player_id)] for tt in time : env.final_time - 1]...)
+			for player in players]...)
+	ū = BlockArray(temp,
+			[player.action_space for player in players], [1 for _ in time:env.final_time - 1]) #TODO: why a block array? use an array of block vectors
 
 	action_length = [player.action_space for player in players]
 	u_k = (tt) -> (tt == env.final_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
-				  BlockVector(vcat([vec(ū[Block(ii, tt - time + 1)]) for ii in eachindex(players)]...), action_length)
-	x_k = (tt) -> BlockVector(vcat([player.predicted_belief[tt-time+1][1:env.state_dim] for player in players]...), [env.state_dim for player in players])
+				BlockVector(vcat([vec(ū[Block(ii, tt - time + 1)]) for ii in eachindex(players)]...), action_length)
+	x_k = (tt) -> BlockVector(vcat([player.predicted_belief[tt-time+1][1:env.state_dim] for player in players]...),
+				[env.state_dim for player in players])
 
 	b̄, _, _ = simulate(env, players, ū, nothing, env.time)
 	belief_length = length(b̄[1])
@@ -66,7 +69,6 @@ function SDGiBS_solve_action(players::Array, env, time; μᵦ = 1.0, μᵤ = 1.0
 			x_u = vcat(b̄[tt][1:end], u_k(tt)[1:end])
 			Wₖ = W(x_u)
 			for ii in eachindex(players)
-                println("player index: ", ii, ", time: ", tt)
 				cost_vars = DiffResults.HessianResult(x_u)
 				cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
 
@@ -93,13 +95,9 @@ function SDGiBS_solve_action(players::Array, env, time; μᵦ = 1.0, μᵤ = 1.0
 
 				jₖ = -Q_uu \ Q_u
 				Kₖ = -Q_uu \ Q_ub # overloaded notation, Kₖ has a different value in belief update
-				# Main.@infiltrate
-
-                # Main.@infiltrate
 				# players[ii].predicted_control[tt] = (δb) -> u_k(tt)[Block(ii)] + jₖ + Kₖ * δb
 				π[tt] = (δb) -> Vector(u_k(tt)) + jₖ + Kₖ * δb
 
-				# Main.@infiltrate
 				V[ii] = Q + (Q_u'*jₖ)[1, 1] + (0.5*jₖ'*Q_uu*jₖ)[1, 1]
 				V_b[ii] .= Q_b + Kₖ' * Q_uu * jₖ + Kₖ' * Q_u + Q_ub' * jₖ
 				V_bb[ii] = Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
@@ -107,10 +105,10 @@ function SDGiBS_solve_action(players::Array, env, time; μᵦ = 1.0, μᵤ = 1.0
 		end
 
 		# Forwards Pass
+		#TODO: update Q_new???
 		if Q_new <= Q_old
 			Q_old = Q_new
 			b̄, ū, _ = simulate(env, players, π, b̄, time)
-            println("len b: ", size(b̄), ", len u: ", size(ū))
 			μᵤ *= 0.1
 			μᵦ *= 0.1
 		else # TODO: make sure we exit if regularization too large
@@ -134,10 +132,9 @@ function simulate(env, players, ū, b̄, time; noise = false)
 	dynamics_noise = BlockVector(zeros(env.dynamics_noise_dim * length(players)), [env.dynamics_noise_dim for _ in 1:length(players)])
 	observation_noise = BlockVector(zeros(env.observation_noise_dim * length(players)), [env.observation_noise_dim for _ in 1:length(players)])
 
-	# Main.@infiltrate
+
 	for tt in time:env.final_time - 1
 		if typeof(ū) == Vector{Function}
-			# TODO: getting complex numbers
 			ū_new[tt-time+1] = BlockVector(vec(ū[tt-time+1](b̄_new[tt-time+1] - b̄[tt-time+1])), [player.action_space for player in players])
 		else
 			ū_new[tt-time+1] = BlockVector(vec(vcat([ū[Block(i, tt-time+1)] for i in eachindex(players)]...)),
@@ -148,16 +145,16 @@ function simulate(env, players, ū, b̄, time; noise = false)
 			dynamics_noise .= [rand(Distributions.Normal()) for _ in 1:env.dynamics_noise_dim*length(players)]
 			observation_noise .= [rand(Distributions.Normal()) for _ in 1:env.observation_noise_dim*length(players)]
 		end
-
-		sts[tt+1] .= env.state_dynamics(sts[tt], ū_new[tt-time+1], dynamics_noise)
-		observations = env.observation_function(states = sts[tt+1], m = observation_noise)
+		sts[tt-time+2] .= env.state_dynamics(sts[tt-time+1], ū_new[tt-time+1], dynamics_noise)
+		Main.@infiltrate tt == env.final_time - 1
+		observations = env.observation_function(states = sts[tt-time+2], m = observation_noise)
 
 		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt-time+1)
 		temp = []
 		for ii in eachindex(players)
 			temp = vcat(temp, vcat(x̂ₖ₊₁[Block(ii)], vec(Σₖ₊₁[Block(ii, ii)])))
 		end
-		b̄_new[tt+1] .= temp
+		b̄_new[tt-time+1] .= temp
 	end
 
 	return b̄_new, ū_new, sts
@@ -230,9 +227,7 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 	Nₖ = h_jacobian[:, length(x̂ₖ)+1:end]
 
 
-	# Main.@infiltrate
 	Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
-	# Main.@infiltrate
 	Kₖ = Γₖ₊₁ * Hₖ' * ((Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ') \ I)
 
 	noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
@@ -240,7 +235,6 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 	covs = [Matrix(temp[Block(ii, ii)]) for ii in eachindex(players)]
 	means = [noiseless_x̂ₖ₊₁[sum(mean_lengths[1:ii-1])+1:sum(mean_lengths[1:ii])] for ii in eachindex(players)]
 	g = vcat(vcat(means...), vcat([vec(covs[ii]) for ii in eachindex(covs)]...))
-	# Main.@infiltrate
 	if calc_W
 		W = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((sum(mean_lengths .^ 2), sum(mean_lengths))))
 	else
@@ -274,7 +268,7 @@ function calculate_belief_variables(env, players, observations, time)
 	end
 
 	# TODO: not entirely sure what design choice I want with env.time + 1 here (depending on how env.time is init)
-	uₖ = BlockVector(vcat([player.predicted_control[time] for player in players]...),
+	uₖ = BlockVector(vcat([player.predicted_control[time][Block(player.player_id)] for player in players]...),
 		[player.action_space for player in players])
 	m = BlockVector([0.0 for _ in 1:env.dynamics_noise_dim*num_players],
 		[env.dynamics_noise_dim for _ in 1:num_players])

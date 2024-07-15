@@ -23,7 +23,7 @@ mutable struct player{}
 	action_space::Int
     observation_space::Int
 	# SDGiBS specific
-	predicted_belief::Vector{Vector{Float64}}
+	predicted_belief::Vector{Any}
 	predicted_control::Vector{Any}
 	feedback_law::Any
 end
@@ -38,7 +38,8 @@ function init_player(;
 	action_space::Int = -1,
     observation_space::Int = -1,
 	default_action::Vector{Float64} = nothing,
-	time::Int = 1)
+	time::Int = 1,
+	num_players::Int = 1)
 
 	# Check inputs are good
 	if Integer(player_type) < 0 || isnothing(belief) || action_space < 0
@@ -52,8 +53,9 @@ function init_player(;
 	belief_updater::Function = (player::player, observation::Vector{Float64}) ->
 		belief_update(player.belief, observation)
 	action_selector::Function = () -> true
-	predicted_belief = [copy(belief) for _ in 1:time+1]
-	predicted_control = [copy(default_action) for _ in 1:time]
+	#TODO: initalizing on top of eachother will  cause evasive manuvers at first
+	predicted_belief = [BlockVector(vcat([copy(belief) for _ in 1:num_players]...), [length(belief), length(belief)]) for _ in 1:time+1]
+	predicted_control = [BlockVector(vcat([copy(default_action) for _ in 1:num_players]...), [length(default_action), length(default_action)]) for _ in 1:time+1]
 	feedback_law = nothing
 
 	if player_type == no_change
@@ -70,7 +72,7 @@ function init_player(;
 	end
 
 	player(player_type, player_id, copy(belief), cost, final_cost,
-    [[nothing, copy(belief), default_action]], belief_updater, action_selector,
+    [[nothing, copy(belief), default_action]], belief_updater, action_selector, # TODO: history should be empty when player initialized
     action_space, observation_space, predicted_belief, predicted_control,
     feedback_law)
 end
@@ -82,7 +84,6 @@ function handle_SDGiBS_action(players::Array{player}, env::base_environment,
 	players[current_player_index].predicted_belief = b̄
 	players[current_player_index].predicted_control = ū
 	players[current_player_index].feedback_law = π
-	println("almost done")
     return players[current_player_index].predicted_control[1]
 end
 
@@ -117,7 +118,6 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
 
         # total_prev_action_space = sum([player.action_space for player in players[1:ii]])
         if player.player_type == type_SDGiBS
-			println("try : ", ii)
 			temp = handle_SDGiBS_action(players, env, ii, env.time)
 			# Main.@infiltrate
             all_actions[Block(ii)] .= temp[Block(ii)]
