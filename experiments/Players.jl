@@ -45,9 +45,6 @@ function init_player(;
 	if Integer(player_type) < 0 || isnothing(belief) || action_space < 0
 		error("One or more inputs must be specified")
 	end
-
-	# everyone should use the same belief updater (from the paper)
-	# belief_updater :: Function = () -> true
     
     # probably vestigial since everyone should use the same belief updater
 	belief_updater::Function = (player::player, observation::Vector{Float64}) ->
@@ -89,6 +86,7 @@ end
 
 export time_step_all
 function time_step_all(players::Array{player}, env::base_environment, observations)
+	println("time stepping at: ", env.time, " / ", env.final_time)
     # Observation, belief, then action, lets say we start with prior -> observation -> belief ->action
     # We count the first action as time 1
 
@@ -108,16 +106,20 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
 
 	# Get updated beliefs
     new_beliefs = SDGiBS.belief_update(env, players, observations)
+	println("new_beliefs: ", new_beliefs)
 
 	for ii in eachindex(players)
 		player = players[ii]
         # push!(player.history, [observations[player.observation_space * (ii - 1) + 1 : player.observation_space * ii], player.belief])
-        player.belief .= new_beliefs[Block(ii)]
+        
         # total_prev_belief_space = sum([player.observation_space for player in players[1:ii]])
         # player.belief = new_beliefs[total_prev_belief_space + 1 : total_prev_belief_space + player.observation_space]
 
         # total_prev_action_space = sum([player.action_space for player in players[1:ii]])
-        if player.player_type == type_SDGiBS
+		if env.time == env.final_time
+			# Main.@infiltrate
+			all_actions[Block(ii)] .= zeros(player.action_space)
+		elseif player.player_type == type_SDGiBS
 			temp = handle_SDGiBS_action(players, env, ii, env.time)
 			# Main.@infiltrate
             all_actions[Block(ii)] .= temp[Block(ii)]
@@ -130,6 +132,11 @@ function time_step_all(players::Array{player}, env::base_environment, observatio
         push!(player.history[end], all_actions[Block(ii)])
         # push!(player.history[end], all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space])
     end
+
+	for ii in eachindex(players)	
+		player = players[ii]
+		player.belief .= new_beliefs[Block(ii)]
+	end
 
     return all_actions
 end

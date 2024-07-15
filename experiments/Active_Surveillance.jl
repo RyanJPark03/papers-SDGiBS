@@ -7,7 +7,7 @@ u⁽ⁱ⁾ = [u_acceleration⁽ⁱ⁾, u_steer⁽ⁱ⁾]
 using BlockArrays
 using LinearAlgebra
 using Distributions
-# using GLMakie
+using GLMakie
 
 include("Environment.jl")
 include("Players.jl")
@@ -25,32 +25,42 @@ function active_surveillance_demo()
     push!(trajectory, demo.env.current_state)
 	motion_noise = 1.0
 
-    for tt in 1:demo.env.final_time
+    for tt in 1:demo.env.final_time - 1
 		println("Planning at time: ", tt)
         # time_step could return a block vector already, not entirely sure
-		Main.@infiltrate
-		m = BlockVector(vcat([rand(-motion_noise:motion_noise, demo.env.observation_noise_dim) for _ in 1:demo.env.num_agents]...),
-						[demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
+		# Main.@infiltrate
+		# m = BlockVector(vcat([rand(-motion_noise:motion_noise, demo.env.observation_noise_dim) for _ in 1:demo.env.num_agents]...),
+		# 				[demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
+		m = BlockVector(zeros(sum([demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])), [demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
 		observations = demo.env.observation_function(;states=BlockVector(demo.env.current_state, [4, 4]),
 				m = m)
         # controls = BlockVector(time_step_all(demo.players, demo.env, observations(demo.env)))
 		controls = time_step_all(demo.players, demo.env, observations)
 		
         push!(trajectory, unroll(demo.env, controls, 1;
-            noise=Vector{Float64}((rand(Distributions.Normal(), 8) .- .5) .* motion_noise)))
+            # noise=Vector{Float64}((rand(Distributions.Normal(), 8) .- .5) .* motion_noise)))
+			noise=zeros(8)))
     end
-	
-	coords1 = vcat([x[Block(1)][1:2] for x in trajectory]...)
-	coords2 = vcat([x[Block(2)][1:2] for x in trajectory]...)
+	# Main.@infiltrate
+	coords1 = [[x[1] for x in trajectory], [x[2] for x in trajectory]]
+	coords2 = [[x[5] for x in trajectory], [x[6] for x in trajectory]]
 
 	println("coords1: ", coords1)
 	println("coords2: ", coords2)
+	# println("types: ", typeof(coords1), " ---- ", typeof(coords1[1]))
 
-	# fig = Figure()
-	# ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
-	# lines!(ax, coords1, color = :blue)
-	# lines!(ax, coords2, color = :red)
-	# fig
+	fig = Figure()
+	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y") # , xlims = (-15, -5), ylims = (15, 25)
+	scatterlines!(coords1[1],coords1[2]; color = :blue)
+	scatterlines!(coords2[1],coords2[2]; color = :red)
+	# scatter!(ax, coords2; color = :red)
+
+	# println(typeof(coords1[1]), typeof(coords1[2]), size(coords1[1]), size(coords1[2]))
+
+	# println(size([1.0,1.0]))
+	# scatter!(,[2.0,3.0])
+	
+	return fig
 end
 
 function init(; L::Int = 1)
@@ -71,7 +81,7 @@ function init(; L::Int = 1)
 end
 
 	function state_dynamics(states::BlockVector{T}, u::BlockVector, m::BlockVector;
-			τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true) where T
+			τ::Float64 = 0.01, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true) where T
 		new_state = Union{BlockVector, Vector}
 		# should i make new_state the same length as states?
 		if block
@@ -152,7 +162,7 @@ end
 		    dynamics_noise_dim = 4,
 			observation_noise_dim = 4,
 			initial_state = initial_state,
-			final_time = 10)
+			final_time = 50)
 
 	# cov matrix 2 0 ; 0 2
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
@@ -162,8 +172,8 @@ end
 		0.0 0.0 .06 0.0;
 		0.0 0.0 0.0 1.0;
 	]
-	initial_beliefs[Block(1)] .= vcat(initial_state[Block(1)], vec(copy(initial_cov_matrix)))
-	initial_beliefs[Block(2)] .= vcat(initial_state[Block(2)], vec(copy(initial_cov_matrix)))
+	initial_beliefs[Block(1)] .= vcat(copy(initial_state[Block(1)]), vec(copy(initial_cov_matrix)))
+	initial_beliefs[Block(2)] .= vcat(copy(initial_state[Block(2)]), vec(copy(initial_cov_matrix)))
 
 	function cₖ¹(β, u)
 		R = Matrix(0.1 * I, 2, 2)

@@ -55,6 +55,9 @@ function unroll(env::base_environment, actions, time_steps::Int;
 	end
 	env.time += time_steps
 	env.current_state = states[end]
+	if time_steps == 1
+		return states[2]
+	end
 	return states[2:end]
 end
 
