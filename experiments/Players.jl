@@ -1,5 +1,3 @@
-# using BlockArrays
-
 using SDGiBS
 
 export player_type
@@ -9,8 +7,8 @@ export player_type
 	type_SDGiBS
 end
 
-export player
-mutable struct player{}
+export Player
+mutable struct Player{}
 	player_type::player_type
 	player_id::Int
 	belief::Vector{Float64}
@@ -21,7 +19,7 @@ mutable struct player{}
 	belief_updater::Function
 	action_selector::Function
 	action_space::Int
-    observation_space::Int
+	observation_space::Int
 	# SDGiBS specific
 	predicted_belief::Vector{Any}
 	predicted_control::Vector{Any}
@@ -36,7 +34,7 @@ function init_player(;
 	cost::Function,
 	final_cost::Function,
 	action_space::Int = -1,
-    observation_space::Int = -1,
+	observation_space::Int = -1,
 	default_action::Vector{Float64} = nothing,
 	time::Int = 1,
 	num_players::Int = 1)
@@ -45,9 +43,9 @@ function init_player(;
 	if Integer(player_type) < 0 || isnothing(belief) || action_space < 0
 		error("One or more inputs must be specified")
 	end
-    
-    # probably vestigial since everyone should use the same belief updater
-	belief_updater::Function = (player::player, observation::Vector{Float64}) ->
+
+	# probably vestigial since everyone should use the same belief updater
+	belief_updater::Function = (player::Player, observation::Vector{Float64}) ->
 		belief_update(player.belief, observation)
 	action_selector::Function = () -> true
 	#TODO: initalizing on top of eachother will  cause evasive manuvers at first
@@ -56,87 +54,94 @@ function init_player(;
 	feedback_law = nothing
 
 	if player_type == no_change
-		action_selector = (player::player, observation::Vector{Float64}) -> default_action
+		action_selector = (player::Player, observation::Vector{Float64}) -> default_action
 	elseif player_type == random
-		action_selector = (player::player, observation::Vector{Float64}) ->
+		action_selector = (player::Player, observation::Vector{Float64}) ->
 			rand(action_space)
 	elseif player_type == type_SDGiBS
-		action_selector = handle_SDGiBS_action
+		action_selector = (players, ii, time, state) -> get_action(players, ii, time, state)
 
 	else
 		error("Unimplemented player type or unknown player type $player_type")
 		return nothing
 	end
 
-	player(player_type, player_id, copy(belief), cost, final_cost,
-    [[nothing, copy(belief), default_action]], belief_updater, action_selector, # TODO: history should be empty when player initialized
-    action_space, observation_space, predicted_belief, predicted_control,
-    feedback_law)
+	Player(player_type, player_id, copy(belief), cost, final_cost,
+		[[copy(default_action), nothing, copy(belief)]], belief_updater, action_selector,
+		action_space, observation_space, predicted_belief, predicted_control,
+		feedback_law)
 end
 
-function handle_SDGiBS_action(players::Array{player}, env::base_environment,
-	current_player_index::Int, time::Int = 1)
-    # probably no π
-	(b̄, ū, π) = SDGiBS_solve_action(players, env, time)
+function handle_SDGiBS_action(players::Array{Player}, env::base_environment,
+	current_player_index::Int, action_selector, time::Int = 1)
+	# probably no π
+	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector)
 	players[current_player_index].predicted_belief = b̄
 	players[current_player_index].predicted_control = ū
 	players[current_player_index].feedback_law = π
-    return players[current_player_index].predicted_control[1]
+	# return players[current_player_index].predicted_control[1]
+end
+
+function get_nominal_belief(current_player, time)
+	return current_player.predicted_belief[time]
+end
+
+function get_δb(current_player, time, state)
+	return state - get_nominal_belief(current_player, time)
+end
+
+export get_action
+function get_action(players, ii, time; state=nothing, nominal_state = nothing, δb = nothing)
+	if isnothing(players[ii].feedback_law)
+		return players[ii].history[end][1]
+	elseif !isnothing(state) && isnothing(nominal_state) && isnothing(δb)
+		return players[ii].feedback_law[time](get_δb(players[ii], time, state))[sum([players[jj].action_space for jj in 1:ii-1])+1:sum([players[jj].action_space for jj in 1:ii])]
+	elseif !isnothing(state) && !isnothing(nominal_state) && isnothing(δb)
+		return players[ii].feedback_law(state - nominal_state)[sum([players[jj].action_space for jj in 1:ii-1])+1:sum([players[jj].action_space for jj in 1:ii])]
+	else # state and nominal state are nothing, δb is not
+		return players[ii].feedback_law(δb)[sum([players[jj].action_space for jj in 1:ii-1])+1:sum([players[jj].action_space for jj in 1:ii])]
+	end
 end
 
 export time_step_all
-function time_step_all(players::Array{player}, env::base_environment, observations)
-	println("time stepping at: ", env.time, " / ", env.final_time)
-    # Observation, belief, then action, lets say we start with prior -> observation -> belief ->action
-    # We count the first action as time 1
+function time_step_all(players::Array{Player}, env::base_environment)
+	println("time step: ", env.time, " / ", env.final_time)
+	# Act, Obs, Upd
 
-    # update all beliefs
-    # temporarily store all new beliefs
+	all_actions = BlockVector{Any}(undef, [player.action_space for player in players])
 
-    # Got observations already#TODO: order wrong probably
-
-    # Do actions
-    all_actions = BlockVector{Float64}(undef, [player.action_space for player in players])
-    # total_action_space = sum([player.action_space for player in players])
-    # all_actions = [0.0 for _ in 1 : total_action_space]
-    for ii in eachindex(players)
-        player = players[ii]
-        push!(player.history, [observations[Block(ii)], player.belief])
-	end
-
-	# Get updated beliefs
-    new_beliefs = SDGiBS.belief_update(env, players, observations)
-	println("new_beliefs: ", new_beliefs)
-
+	# Act
 	for ii in eachindex(players)
 		player = players[ii]
-        # push!(player.history, [observations[player.observation_space * (ii - 1) + 1 : player.observation_space * ii], player.belief])
-        
-        # total_prev_belief_space = sum([player.observation_space for player in players[1:ii]])
-        # player.belief = new_beliefs[total_prev_belief_space + 1 : total_prev_belief_space + player.observation_space]
-
-        # total_prev_action_space = sum([player.action_space for player in players[1:ii]])
 		if env.time == env.final_time
-			# Main.@infiltrate
-			all_actions[Block(ii)] .= zeros(player.action_space)
+			# all_actions[Block(ii)] .= zeros(player.action_space)
+			player.predicted_control = zeros(player.action_space)
 		elseif player.player_type == type_SDGiBS
-			temp = handle_SDGiBS_action(players, env, ii, env.time)
-			# Main.@infiltrate
-            all_actions[Block(ii)] .= temp[Block(ii)]
-            # all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space] = handle_SDGiBS_action(players, env, ii)
-            # all_actions
-        else
-            all_actions[Block(ii)] .= action_selector(player, observations[Block(ii)])
-            # all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space] = player.action_selector(player, observations[total_prev_belief_space + 1 : total_prev_belief_space + player.observation_space])
-        end
-        push!(player.history[end], all_actions[Block(ii)])
-        # push!(player.history[end], all_actions[total_prev_action_space + 1 : total_prev_action_space + player.action_space])
-    end
-
-	for ii in eachindex(players)	
-		player = players[ii]
-		player.belief .= new_beliefs[Block(ii)]
+			handle_SDGiBS_action(players, env, ii, get_action, env.time)
+			# all_actions[Block(ii)] .= (δb) -> players[ii].feedback_law(δb)[Block(ii)]
+		else
+			# all_actions[Block(ii)] .= 
+			action_selector(player, observations[Block(ii)])
+		end
 	end
 
-    return all_actions
+	# Iterate environment
+	unroll(env, players; noise = false)
+
+	# Do observations
+	motion_noise = 1.0
+	# m = BlockVector(vcat([rand(-motion_noise:motion_noise, demo.env.observation_noise_dim) for _ in 1:demo.env.num_agents]...),
+	# [demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
+	m = BlockVector(zeros(sum([env.observation_noise_dim for _ in 1:env.num_agents])), [env.observation_noise_dim for _ in 1:env.num_agents])
+
+	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)
+
+	# Get updated beliefs
+	old_beliefs = vcat([player.belief for player in players]...)
+	new_beliefs = SDGiBS.belief_update(env, players, observations)
+	for ii in eachindex(players)
+		player = players[ii]
+		player.belief .= new_beliefs[Block(ii)]
+		push!(player.history, [get_action(players, ii, 1; state = old_beliefs), observations[Block(ii)], player.belief])
+	end
 end

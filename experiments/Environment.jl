@@ -37,28 +37,24 @@ function init_base_environment(;
 		final_time)
 end
 
-function unroll(env::base_environment, actions, time_steps::Int;
-    noise::Vector{Float64}=nothing)
-	if time_steps + env.time > env.final_time
+function unroll(env::base_environment, players;
+    noise=true)
+	if 1 + env.time > env.final_time
 		println("Time steps exceed final time")
-		return nothing
+		return
 	end
 
-	states::Array{Vector{Float64}} = [[] for _ in 1:time_steps+1]
-	states[1] = env.current_state
-	for tt in 2:time_steps+1
-        if !isnothing(noise)
-            states[tt] = env.state_dynamics(states[tt-1], actions, noise)
-        else
-            states[tt] = env.state_dynamics(states[tt-1], actions)
-        end
+	actions = BlockVector{Float64}(undef, [player.action_space for player in players])
+	cur_beliefs = vcat([player.belief for player in players]...)
+
+	for ii in eachindex(players)
+		actions[Block(ii)] .= get_action(players, ii, 1; state = cur_beliefs)
 	end
-	env.time += time_steps
-	env.current_state = states[end]
-	if time_steps == 1
-		return states[2]
-	end
-	return states[2:end]
+	dn = (noise) ? (rand(Distributions.Normal(), env.dynamics_noise_dim*env.num_agents)) : zeros(env.dynamics_noise_dim*env.num_agents)
+	dyn_noise = BlockVector(dn, [env.dynamics_noise_dim for _ in 1:env.num_agents])
+	env.current_state = env.state_dynamics(env.current_state, actions, dyn_noise)
+
+	env.time += 1
 end
 
 function observations(env::base_environment)
