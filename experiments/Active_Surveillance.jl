@@ -66,6 +66,7 @@ end
 			x, y, θ, v = states[Block(i)]
 			accel, steer = u[Block(i)]
 
+			# println("steer: ", steer) #steer is going to infinity
 			ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel]# assign 2 5 for drawing
 
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
@@ -128,14 +129,14 @@ end
 		    dynamics_noise_dim = 4,
 			observation_noise_dim = 4,
 			initial_state = initial_state,
-			final_time = 3)
+			final_time = 15)
 
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
 	initial_cov_matrix = [
-		2.0 0.0 0.0 0.0;
-		0.0 2.0 0.0 0.0;
+		0.5 0.0 0.0 0.0;
+		0.0 0.5 0.0 0.0;
 		0.0 0.0 .06 0.0;
-		0.0 0.0 0.0 1.0;
+		0.0 0.0 0.0 0.5;
 	]
 	initial_beliefs[Block(1)] .= vcat(copy(initial_state[Block(1)]), vec(copy(initial_cov_matrix)))
 	initial_beliefs[Block(2)] .= vcat(copy(initial_state[Block(2)]), vec(copy(initial_cov_matrix)))

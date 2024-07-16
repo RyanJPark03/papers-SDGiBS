@@ -323,7 +323,7 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 	Nₖ = round.(h_jacobian[:, length(x̂ₖ)+1:end], digits = 10)
 
 	Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
-	Main.@infiltrate any(isnan.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ'))
+	# Main.@infiltrate any(isnan.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ'))
 	Kₖ = Γₖ₊₁ * Hₖ' * (round.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ', digits = 100) \ I)
 
 	noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)

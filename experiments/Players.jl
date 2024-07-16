@@ -108,8 +108,6 @@ function time_step_all(players::Array{Player}, env::base_environment)
 	println("time step: ", env.time, " / ", env.final_time)
 	# Act, Obs, Upd
 
-	all_actions = BlockVector{Any}(undef, [player.action_space for player in players])
-
 	# Act
 	for ii in eachindex(players)
 		player = players[ii]
@@ -118,9 +116,7 @@ function time_step_all(players::Array{Player}, env::base_environment)
 			player.predicted_control = zeros(player.action_space)
 		elseif player.player_type == type_SDGiBS
 			handle_SDGiBS_action(players, env, ii, get_action, env.time)
-			# all_actions[Block(ii)] .= (δb) -> players[ii].feedback_law(δb)[Block(ii)]
 		else
-			# all_actions[Block(ii)] .= 
 			action_selector(player, observations[Block(ii)])
 		end
 	end
@@ -130,9 +126,9 @@ function time_step_all(players::Array{Player}, env::base_environment)
 
 	# Do observations
 	motion_noise = 1.0
-	# m = BlockVector(vcat([rand(-motion_noise:motion_noise, demo.env.observation_noise_dim) for _ in 1:demo.env.num_agents]...),
-	# [demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
-	m = BlockVector(zeros(sum([env.observation_noise_dim for _ in 1:env.num_agents])), [env.observation_noise_dim for _ in 1:env.num_agents])
+	m = BlockVector(vcat([rand(-motion_noise:motion_noise, demo.env.observation_noise_dim) for _ in 1:demo.env.num_agents]...),
+	[demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
+	# m = BlockVector(zeros(sum([env.observation_noise_dim for _ in 1:env.num_agents])), [env.observation_noise_dim for _ in 1:env.num_agents])
 
 	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)
 
