@@ -20,7 +20,7 @@ end
 
 
 function active_surveillance_demo_main()
-	open("./out.txt", "w") do file
+	open("./out1.temp", "w") do file
 		redirect_stdout(file) do 
 			run_active_surveillance_demo()
 		end
@@ -49,22 +49,24 @@ function run_active_surveillance_demo()
 end
 
 function init(; L::Int = 1)
+	τₒ = .002
+	state_dynamics_noise_scaler = (u) -> norm(u)^2 .* I
 	function state_dynamics(states::Vector{T}, u, m;
-		τ::Float64 = 1.0, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true) where T
-	new_state = Vector{T}(undef, length(states))
-	for i in 1:2
-		x, y, θ, v = states[4 * (i - 1) + 1 : 4 * i]
-		accel, steer = u[2 * (i - 1) + 1 : 2 * i]
+		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true) where T
+		new_state = Vector{T}(undef, length(states))
+		for i in 1:2
+			x, y, θ, v = states[4 * (i - 1) + 1 : 4 * i]
+			accel, steer = u[2 * (i - 1) + 1 : 2 * i]
 
-		ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel]
+			ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel]
 
-		new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[i]) * m[4 * (i - 1) + 1 : 4 * i]
+			new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[i]) * m[4 * (i - 1) + 1 : 4 * i]
+		end
+		return new_state
 	end
-	return new_state
-end
 
 	function state_dynamics(states::BlockVector{T}, u::BlockVector, m::BlockVector;
-			τ::Float64 = 0.1, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 10.0, ϵₛ::Float64 = 1e-6,
+			τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 10.0, ϵₛ::Float64 = 1e-6,
 			 block=true) where T
 		new_state = Union{BlockVector, Vector}
 		if block
@@ -142,7 +144,7 @@ end
 		    dynamics_noise_dim = 4,
 			observation_noise_dim = 4,
 			initial_state = initial_state,
-			final_time = 16) # 15 if inital action is 0 0.5
+			final_time = 100) # 15 if inital action is 0 0.5
 
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
 	initial_cov_matrix = [

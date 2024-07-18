@@ -9,6 +9,12 @@ using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 
 include("FiniteDiff.jl")
 
+fig = Figure()
+ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
+scatterlines!(coords1[1],coords1[2]; color = :blue)
+scatterlines!(coords2[1],coords2[2]; color = :red)
+
+
 export belief_update
 function belief_update(env, players::Array, observations)
 	return calculate_belief_variables(env, players, observations, env.time, nothing, nothing)[1]
@@ -134,7 +140,7 @@ function create_policy(nominal_control, feed_forward, feed_backward)
 	println("\nnorm of feed forward: ", norm(feed_forward), "\nnorm of feed_backward: ", norm(feed_backward))
 	
 	show(stdout, "text/plain",  feed_forward)
-	pritnln()
+	println()
 	show(stdout, "text/plain",  feed_backward)
 	function (δb)
 		# println("norm delta b: ", norm(δb))
