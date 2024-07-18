@@ -15,7 +15,7 @@ function belief_update(env, players::Array, observations)
 end
 
 export SDGiBS_solve_action
-function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, μᵤ = 1.0, ϵ = 1e-10)
+function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.0, μᵤ = 1000.0, ϵ = 1e-10)
 	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
 	for ii in eachindex(players)
 		player = players[ii]
@@ -57,6 +57,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, 
 	V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
 
 	while norm(Q_new - Q_old, 2) > ϵ
+		println("diff in Q: ", norm(Q_new - Q_old, 2))
 		# Bakcwards pass
 		for tt in env.final_time-1:-1:env.time
 			# πₖ = ūₖ + jₖ + Kₖ * δbₖ
@@ -64,7 +65,9 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, 
 			# Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ\_b
 
 			x_u .= vcat(b̄[tt - env.time + 1][1:end], u_k(tt - env.time + 1, b̄[tt - env.time + 1])[1:end])
-
+			println("calculating cost gradient at:")
+			show(stdout, "text/plain", x_u)
+			println()
 			Wₖ = W(x_u)
 			for ii in eachindex(players)
 				cost_vars = DiffResults.HessianResult(x_u)
@@ -91,17 +94,6 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, 
 				Q_ub = Qₛₛ[belief_length+1:end, 1:belief_length]
 				Q_uu = Qₛₛ[belief_length+1:end, belief_length+1:end] + μᵤ * I
 
-				
-				arr = [any(isnan.(Q_uu)), any(isinf.(Q_uu)), any(isnan.(Q_u)), any(isinf.(Q_u)), any(isnan.(Q_ub)), any(isinf.(Q_ub))]
-				if any(arr)
-					println(arr)
-					println("time: ", tt, ", player: ", ii)
-					display(Q_uu)
-					display(Q_u)
-					display(Q_ub)
-					error("oopsie")
-				end
-
 				jₖ = -Q_uu \ Q_u
 				Kₖ = -Q_uu \ Q_ub # overloaded notation, Kₖ has a different value in belief update
 				π[tt-env.time+1] = create_policy(ū[tt-env.time+1], jₖ, Kₖ)
@@ -112,36 +104,50 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, 
 				V_bb[ii] = Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
 			end
 		end
-
+		println("--------------------------Forward Pass--------------------------")
 		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time; noise=true)
+		#TODO: try plotting trajectories here
 		Q_new = cost(players, b̄_new, ū_new)
 		# Forwards Pass
 		if Q_new <= Q_old
+			println("Q_new: ", Q_new, ", Q_old: ", Q_old)
+			println(ū_new)
 			Q_old = Q_new
 			b̄ = b̄_new
 			ū = ū_new
-			μᵤ *= 0.1
-			μᵦ *= 0.1
+			μᵤ *= 0.75
+			μᵦ *= 0.75
 		else
+			println("increasing regularization")
 			if μᵤ > 1e10 || μᵦ > 1e10
 				println("μ too large")
 				break
 			end
-			μᵤ *= 10
-			μᵦ *= 10
+			μᵤ *= 10 * env.final_time
+			μᵦ *= 10 * env.final_time
 		end
 	end
 	return b̄, ū, π
 end
 
 function create_policy(nominal_control, feed_forward, feed_backward)
+	println("\nnorm of feed forward: ", norm(feed_forward), "\nnorm of feed_backward: ", norm(feed_backward))
+	
+	show(stdout, "text/plain",  feed_forward)
+	pritnln()
+	show(stdout, "text/plain",  feed_backward)
 	function (δb)
+		# println("norm delta b: ", norm(δb))
+		println("δb")
+		show(stdout, "text/plain",  δb)
+		println()
 		return nominal_control + vec(feed_forward) + feed_backward * δb
 	end
 end
 
 function simulate(env, players, ū, b̄, time; noise = false)
 	# TODO: its not env state dim but observation dim
+		println("------------------------simulating------------------------")
 	b̄_new = [BlockVector{Float64}(undef, [env.state_dim + env.state_dim^2 for _ in eachindex(players)]) for _ in time:env.final_time]
 	sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in time:env.final_time]
 	ū_actual = [BlockVector{Float64}(undef, [player.action_space for player in players]) for _ in time:env.final_time-1]
@@ -155,6 +161,7 @@ function simulate(env, players, ū, b̄, time; noise = false)
 	observation_noise = BlockVector(zeros(env.observation_noise_dim * length(players)), [env.observation_noise_dim for _ in 1:length(players)])
 
 	for tt in time:env.final_time-1
+		println("simulating time: ", tt)
 		if isa(ū, Function)
 			if isnothing(b̄) # first rollout does not have a nominal trajectory
 				ū_actual[tt-time+1] .= vcat([player.history[end][1] for player in players]...)
@@ -172,9 +179,9 @@ function simulate(env, players, ū, b̄, time; noise = false)
 		sts[tt-time+2] .= env.state_dynamics(sts[tt-time+1], ū_actual[tt-time+1], dynamics_noise)
 		observations = env.observation_function(states = sts[tt-time+2], m = observation_noise)
 
-		asdf = calculate_belief_variables(env, players, observations, tt, b̄_new[tt-time+1], ū_actual[tt-time+1])
-		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = asdf
-		
+		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt, b̄_new[tt-time+1], ū_actual[tt-time+1])
+		println("norms:\n\tAₖ: ", norm(Aₖ), "\n\tMₖ: ", norm(Mₖ), "\n\tHₖ: ", norm(Hₖ), "\n\tNₖ: ", norm(Nₖ), "\n\tKₖ: ", norm(Kₖ))
+
 		b̄_new[tt-time+2] .= β
 	end
 
@@ -312,6 +319,8 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 		states = BlockVector(x[Block(1)], mean_lengths),
 		m = BlockVector(x[Block(2)], [env.observation_noise_dim for _ in 1:num_players]), block = false)
 
+	println("gradient at:\n\t\tx̂ₖ: ", round.(x̂ₖ, digits = 5),"\n\t\tûₖ: ", uₖ,"\n\t\tmₖ: ", m)
+
 	j_cfg = JacobianConfig(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), Chunk{20}())
 	f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), j_cfg)
 	Aₖ = round.(f_jacobian[:, 1:length(x̂ₖ)], digits = 10)
@@ -327,9 +336,8 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 	Kₖ = Γₖ₊₁ * Hₖ' * (round.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ', digits = 100) \ I)
 
 	noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
-	zeroed_env_noise = BlockVector([0.0 for _ in 1:env.observation_noise_dim*num_players], [env.observation_noise_dim for _ in eachindex(players)])
 
-	temp  = env.observation_function(states = noiseless_x̂ₖ₊₁, m = zeroed_env_noise)
+	temp  = env.observation_function(states = noiseless_x̂ₖ₊₁, m = n)
 	x̂ₖ₊₁ = noiseless_x̂ₖ₊₁ + Kₖ * (observations - temp)
 	Σₖ₊₁ = (I - Kₖ * Hₖ) * Γₖ₊₁
 

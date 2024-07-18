@@ -110,6 +110,7 @@ function time_step_all(players::Array{Player}, env::base_environment)
 
 	# Act
 	for ii in eachindex(players)
+		println("solving player: ", ii)
 		player = players[ii]
 		if env.time == env.final_time
 			# all_actions[Block(ii)] .= zeros(player.action_space)
@@ -126,8 +127,8 @@ function time_step_all(players::Array{Player}, env::base_environment)
 
 	# Do observations
 	motion_noise = 1.0
-	m = BlockVector(vcat([rand(-motion_noise:motion_noise, demo.env.observation_noise_dim) for _ in 1:demo.env.num_agents]...),
-	[demo.env.observation_noise_dim for _ in 1:demo.env.num_agents])
+	m = BlockVector(vcat([rand(-motion_noise:motion_noise, env.observation_noise_dim) for _ in 1:env.num_agents]...),
+	[env.observation_noise_dim for _ in 1:env.num_agents])
 	# m = BlockVector(zeros(sum([env.observation_noise_dim for _ in 1:env.num_agents])), [env.observation_noise_dim for _ in 1:env.num_agents])
 
 	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)

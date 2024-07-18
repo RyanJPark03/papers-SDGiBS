@@ -18,7 +18,16 @@ struct surveillance_demo{}
 	players::Array{Player}
 end
 
-function active_surveillance_demo()
+
+function active_surveillance_demo_main()
+	open("./out.txt", "w") do file
+		redirect_stdout(file) do 
+			run_active_surveillance_demo()
+		end
+	end
+end
+
+function run_active_surveillance_demo()
 
 	demo = init(; L = 1)
     trajectory = []
@@ -55,7 +64,8 @@ function init(; L::Int = 1)
 end
 
 	function state_dynamics(states::BlockVector{T}, u::BlockVector, m::BlockVector;
-			τ::Float64 = 0.1, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 1.0, block=true) where T
+			τ::Float64 = 0.1, M::Function = (u) -> 1.0 * norm(u)^2, L::Float64 = 10.0, ϵₛ::Float64 = 1e-6,
+			 block=true) where T
 		new_state = Union{BlockVector, Vector}
 		if block
 			new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
@@ -67,13 +77,16 @@ end
 			accel, steer = u[Block(i)]
 
 			# println("steer: ", steer) #steer is going to infinity
-			ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel]# assign 2 5 for drawing
+			steer = max(5π/6, min(-5π/6, steer))
+			δv = (abs(steer) < ϵₛ) ? 0.0 : v / (L * tan(steer))
+			ẋ = [v * cos(θ), v * sin(θ), δv, accel]# assign 2 5 for drawing
 
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
 			if block
-				new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+				new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[Block(i)]) * m[Block(i)]
+				new_state[Block(i)][3] %= 2π
 			else
-				new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[i]) * m[Block(i)]
+				new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[Block(i)]) * m[Block(i)]
 			end
 		end
 		return new_state
@@ -81,9 +94,9 @@ end
 
 	function measurement_noise_scaler(state::Vector; surveillance_radius::Int = 10)
 		# Only take x and y coords from state vector
-		n = norm(state[1:2], 2) - surveillance_radius
-		n = max(1, n) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
-		n = min(5, n) # make sure noise multiplier doesn't get too large
+		n = norm(state[1:2] .- 5, 2) - surveillance_radius
+		n = max(0.1, n) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
+		n = min(100000, n) # make sure noise multiplier doesn't get too large
 
         v = .25 * state[4]^2 # velocity scaled noise
         t = .01 * 360 # noise for theta is 1% of a circle
@@ -118,8 +131,8 @@ end
 	end
 
 	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
-	initial_state[Block(1)] .= [-10.0, 20.0, 0.0, 1.0] # Player 1, surveiller
-	initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 1.0]
+	initial_state[Block(1)] .= [10.0, 20.0, 0.0, 1.0] # Player 1, surveiller
+	initial_state[Block(2)] .= [10.0, 15.0, 0.0, 1.0]
 
 	env = init_base_environment(;
 			state_dynamics = state_dynamics,
@@ -129,12 +142,12 @@ end
 		    dynamics_noise_dim = 4,
 			observation_noise_dim = 4,
 			initial_state = initial_state,
-			final_time = 15)
+			final_time = 16) # 15 if inital action is 0 0.5
 
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
 	initial_cov_matrix = [
-		0.5 0.0 0.0 0.0;
-		0.0 0.5 0.0 0.0;
+		1.0 0.0 0.0 0.0;
+		0.0 1.0 0.0 0.0;
 		0.0 0.0 .06 0.0;
 		0.0 0.0 0.0 0.5;
 	]
@@ -155,11 +168,10 @@ end
 		else
 			return prod(diag(reshape(β[Int(length(β)//2 + 5):end], (4, 4))))
 		end
-		return 	t
 	end
 
-	α₁ = 1.0
-	α₂ = 1.0
+	α₁ = 10.0
+	α₂ = 10.0
 	vₖ_des = 1.0
 	function c_coll(β)
 		# "c_coll = exp(-d(xₖ)). Here d(xₖ) is the expcted euclidean distance
@@ -198,8 +210,8 @@ end
 		final_cost = final_costs[i],
 		action_space = 2,
 		observation_space = 4,
-		default_action = [0.0, 0.5],# accel, steer
-		time = 20,
+		default_action = [0.0, -0.05],# accel, steer
+		time = env.final_time,
 		num_players = 2) for i in 1:2]
 
 	return surveillance_demo(env, players)
