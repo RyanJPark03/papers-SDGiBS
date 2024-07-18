@@ -97,8 +97,13 @@ function get_action(players, ii, time; state=nothing, nominal_state = nothing, �
 	elseif !isnothing(state) && isnothing(nominal_state) && isnothing(δb)
 		return players[ii].feedback_law[time](get_δb(players[ii], time, state))[sum([players[jj].action_space for jj in 1:ii-1])+1:sum([players[jj].action_space for jj in 1:ii])]
 	elseif !isnothing(state) && !isnothing(nominal_state) && isnothing(δb)
-		return players[ii].feedback_law(state - nominal_state)[sum([players[jj].action_space for jj in 1:ii-1])+1:sum([players[jj].action_space for jj in 1:ii])]
+		db = state - nominal_state
+		db[3] %= 2π
+		db[7] %= 2π
+		return players[ii].feedback_law(db)[sum([players[jj].action_space for jj in 1:ii-1])+1:sum([players[jj].action_space for jj in 1:ii])]
 	else # state and nominal state are nothing, δb is not
+		δb[3] %= 2π
+		δb[7] %= 2π
 		return players[ii].feedback_law(δb)[sum([players[jj].action_space for jj in 1:ii-1])+1:sum([players[jj].action_space for jj in 1:ii])]
 	end
 end

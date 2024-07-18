@@ -9,12 +9,6 @@ using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 
 include("FiniteDiff.jl")
 
-fig = Figure()
-ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
-scatterlines!(coords1[1],coords1[2]; color = :blue)
-scatterlines!(coords2[1],coords2[2]; color = :red)
-
-
 export belief_update
 function belief_update(env, players::Array, observations)
 	return calculate_belief_variables(env, players, observations, env.time, nothing, nothing)[1]

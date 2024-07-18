@@ -49,7 +49,7 @@ function run_active_surveillance_demo()
 end
 
 function init(; L::Int = 1)
-	τₒ = .002
+	τₒ = .1
 	state_dynamics_noise_scaler = (u) -> norm(u)^2 .* I
 	function state_dynamics(states::Vector{T}, u, m;
 		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true) where T
@@ -144,7 +144,7 @@ function init(; L::Int = 1)
 		    dynamics_noise_dim = 4,
 			observation_noise_dim = 4,
 			initial_state = initial_state,
-			final_time = 100) # 15 if inital action is 0 0.5
+			final_time = 50) # 15 if inital action is 0 0.5
 
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
 	initial_cov_matrix = [
