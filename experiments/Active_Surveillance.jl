@@ -8,6 +8,7 @@ using BlockArrays
 using LinearAlgebra
 using Distributions
 using GLMakie
+using ProgressBars
 
 include("Environment.jl")
 include("Players.jl")
@@ -20,37 +21,48 @@ end
 
 
 function active_surveillance_demo_main()
-	open("./out1.temp", "w") do file
+	open("./out.temp", "w") do file
 		redirect_stdout(file) do 
-			run_active_surveillance_demo()
+			run_active_surveillance_demo(50, .1)
 		end
 	end
 end
 
-function run_active_surveillance_demo()
+function run_active_surveillance_demo(time_steps, τ)
 
-	demo = init(; L = 1)
+	demo = init(time_steps, τ; L = 1)
     trajectory = []
     push!(trajectory, demo.env.current_state)
 
-    for tt in 1:demo.env.final_time - 1
+    for tt in ProgressBar(1:demo.env.final_time - 1)
 		time_step_all(demo.players, demo.env)
         push!(trajectory, demo.env.current_state)
     end
-	
+	# Main.@infiltrate
 	coords1 = [[x[1] for x in trajectory], [x[2] for x in trajectory]]
 	coords2 = [[x[5] for x in trajectory], [x[6] for x in trajectory]]
+
+	belief_coords1 = [[x[3][1] for x in demo.players[1].history], [x[3][2] for x in demo.players[1].history]]
+	belief_coords2 = [[x[3][1] for x in demo.players[2].history], [x[3][2] for x in demo.players[2].history]]
+
+	observations1 = [[demo.players[1].history[x][2][1] for x in 2:length(demo.players[1].history)],
+	[demo.players[1].history[x][2][2] for x in 2:length(demo.players[1].history)]]
+	observations2 = [[demo.players[2].history[x][2][1] for x in 2:length(demo.players[1].history)],
+	[demo.players[2].history[x][2][2] for x in 2:length(demo.players[1].history)]]
 
 	fig = Figure()
 	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
 	scatterlines!(coords1[1],coords1[2]; color = :blue)
-	scatterlines!(coords2[1],coords2[2]; color = :red)
+	scatterlines!(belief_coords1[1], belief_coords1[2]; color = (:blue, 0.75), linestyle = :dash)
+	# scatterlines!(observations1[1], observations1[2]; color = (:blue, 0.5), linestyle = :dot)
+	scatterlines!(coords2[1], coords2[2]; color = :red)
+	scatterlines!(belief_coords2[1], belief_coords2[2]; color = (:red, 0.75), linestyle = :dash)
 	return fig
 end
 
-function init(; L::Int = 1)
-	τₒ = .1
-	state_dynamics_noise_scaler = (u) -> norm(u)^2 .* I
+function init(time_steps, τₒ; L::Int = 1)
+	# τₒ = .1
+	state_dynamics_noise_scaler = (u) ->  (norm(u)^2)^.25 .* I
 	function state_dynamics(states::Vector{T}, u, m;
 		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true) where T
 		new_state = Vector{T}(undef, length(states))
@@ -58,9 +70,12 @@ function init(; L::Int = 1)
 			x, y, θ, v = states[4 * (i - 1) + 1 : 4 * i]
 			accel, steer = u[2 * (i - 1) + 1 : 2 * i]
 
-			ẋ = [v * cos(θ), v * sin(θ), v / (L * tan(steer)), accel]
+			dv = ( (v * tan(steer)) / L )
+			ẋ = [v * cos(θ), v * sin(θ), dv, accel]
 
 			new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[i]) * m[4 * (i - 1) + 1 : 4 * i]
+			# new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + 0 .*  m[4 * (i - 1) + 1 : 4 * i]
+			# new_state[4 * (i - 1) + 3] %= 2π
 		end
 		return new_state
 	end
@@ -85,10 +100,13 @@ function init(; L::Int = 1)
 
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
 			if block
+				# new_state[Block(i)] .= states[Block(i)] + τ * ẋ + 0.0 .* m[Block(i)]
 				new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[Block(i)]) * m[Block(i)]
 				new_state[Block(i)][3] %= 2π
 			else
 				new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[Block(i)]) * m[Block(i)]
+				# new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + 0.0 .* m[Block(i)]
+				new_state[4 * (i - 1) + 3] %= 2π
 			end
 		end
 		return new_state
@@ -96,11 +114,16 @@ function init(; L::Int = 1)
 
 	function measurement_noise_scaler(state::Vector; surveillance_radius::Int = 10)
 		# Only take x and y coords from state vector
-		n = norm(state[1:2] .- 5, 2) - surveillance_radius
-		n = max(0.1, n) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
-		n = min(100000, n) # make sure noise multiplier doesn't get too large
+		n_outer =  0.01 * (norm(state[1:2], 2) - surveillance_radius)^2
+		n_outer = max(0.01, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
+		n_outer = min(1000, n_outer) # make sure noise multiplier doesn't get too large
 
-        v = .25 * state[4]^2 # velocity scaled noise
+		n_inner = 1 / (10 * (norm(state[1:2], 2) - surveillance_radius)^2)
+		n_inner = min(100, n_inner) # make sure noise multiplier doesn't get too large
+
+		n = n_outer + n_inner
+
+        v = .2 * state[4]^2 # velocity scaled noise
         t = .01 * 360 # noise for theta is 1% of a circle
 
         noise = 
@@ -133,8 +156,8 @@ function init(; L::Int = 1)
 	end
 
 	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
-	initial_state[Block(1)] .= [10.0, 20.0, 0.0, 1.0] # Player 1, surveiller
-	initial_state[Block(2)] .= [10.0, 15.0, 0.0, 1.0]
+	initial_state[Block(1)] .= [-10.0, 20.0, 0.0, 5.0] # Player 1, surveiller
+	initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 5.0]
 
 	env = init_base_environment(;
 			state_dynamics = state_dynamics,
@@ -144,13 +167,13 @@ function init(; L::Int = 1)
 		    dynamics_noise_dim = 4,
 			observation_noise_dim = 4,
 			initial_state = initial_state,
-			final_time = 50) # 15 if inital action is 0 0.5
+			final_time = time_steps) # 15 if inital action is 0 0.5
 
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
 	initial_cov_matrix = [
-		1.0 0.0 0.0 0.0;
-		0.0 1.0 0.0 0.0;
-		0.0 0.0 .06 0.0;
+		10.0 0.0 0.0 0.0;
+		0.0 10.0 0.0 0.0;
+		0.0 0.0 0.006 0.0;
 		0.0 0.0 0.0 0.5;
 	]
 	initial_beliefs[Block(1)] .= vcat(copy(initial_state[Block(1)]), vec(copy(initial_cov_matrix)))
@@ -172,17 +195,19 @@ function init(; L::Int = 1)
 		end
 	end
 
-	α₁ = 10.0
+	α₁ = 1.0
 	α₂ = 10.0
-	vₖ_des = 1.0
+	vₖ_des = 8.0
 	function c_coll(β)
 		# "c_coll = exp(-d(xₖ)). Here d(xₖ) is the expcted euclidean distance
 		# until collision between the two agents, taking their outline into account."
 		# TODO wtf does "taking their outline into account" mean???
 		if typeof(β) == BlockVector
-			return norm(β[Block(1)][1:2] - β[Block(2)][1:2], 2)
+			safety_distance = max(β[Block(1)][5], β[Block(1)][10]) + max(β[Block(2)][5], β[Block(2)][10])
+			return exp(-norm(β[Block(1)][1:2] - β[Block(2)][1:2], 2))
 		else
-			return norm(β[1:2] - β[Int(length(β)//2 + 1):Int(length(β)//2 + 2)], 2)
+			safety_distance = max(β[5], β[10]) + max(β[Int(length(β)//2 + 5)], β[Int(length(β)//2 + 10)])
+			return exp(-norm(β[1:2] - β[Int(length(β)//2 + 1):Int(length(β)//2 + 2)], 2))
 		end
 	end
 	function cₖ²(β::T, u::T) where T
@@ -204,6 +229,7 @@ function init(; L::Int = 1)
 	costs = [cₖ¹, cₖ²]
 	final_costs = [cₗ¹, cₗ²]
 
+	# Main.@infiltrate
 	players = [init_player(;
 		player_type = type_SDGiBS,
 		player_id = i,
@@ -212,7 +238,7 @@ function init(; L::Int = 1)
 		final_cost = final_costs[i],
 		action_space = 2,
 		observation_space = 4,
-		default_action = [0.0, -0.05],# accel, steer
+		default_action = [0.0, -0.01],# accel, steer
 		time = env.final_time,
 		num_players = 2) for i in 1:2]
 

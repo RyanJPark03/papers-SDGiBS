@@ -19,7 +19,6 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.
 	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
 	for ii in eachindex(players)
 		player = players[ii]
-		# Σₒ[Block(ii, ii)] .= reshape(player.history[env.time][3][player.observation_space+1:end], (player.observation_space, player.observation_space))
 		Σₒ[Block(ii, ii)] .= reshape(player.belief[player.observation_space+1:end], (player.observation_space, player.observation_space))
 	end
 
@@ -43,13 +42,12 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.
 	π::Array{Function} = [() -> zero(sum(action_length)) for _ in env.time:env.final_time-1]
 
 	c = [player.final_cost for player in players]
-	ck = [(xlooks_u) -> player.cost(x_u[1:belief_length], x_u[belief_length+1:end]) for player in players]
+	ck = [(x_u) -> player.cost(x_u[1:belief_length], x_u[belief_length+1:end]) for player in players]
 
 	ηₓ = sum([player.observation_space for player in players])
 
 	W = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players)[1]
 	g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players, calc_W = false)[2]
-	# x_u = vcat(b̄[end][1:end], u_k(time)[1:end])
 	x_u = vcat(b̄[end][1:end], u_k(env.final_time, b̄[end]))
 
 	V = map((cᵢ) -> cᵢ(b̄[end]), c)
@@ -57,23 +55,18 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.
 	V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
 
 	while norm(Q_new - Q_old, 2) > ϵ
-		println("diff in Q: ", norm(Q_new - Q_old, 2))
-		# Bakcwards pass
 		for tt in env.final_time-1:-1:env.time
 			# πₖ = ūₖ + jₖ + Kₖ * δbₖ
 			# jₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
 			# Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ\_b
 
 			x_u .= vcat(b̄[tt - env.time + 1][1:end], u_k(tt - env.time + 1, b̄[tt - env.time + 1])[1:end])
-			println("calculating cost gradient at:")
-			show(stdout, "text/plain", x_u)
-			println()
 			Wₖ = W(x_u)
 			for ii in eachindex(players)
 				cost_vars = DiffResults.HessianResult(x_u)
 				cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
 
-				Wₛ = finite_diff(W, x_u) # TODO: solve for Wₛ using Lyapunov, make A = -A
+				Wₛ = finite_diff(W, x_u)
 				gₛ = ForwardDiff.jacobian(g, x_u)
 
 				Q = DiffResults.value(cost_vars) + V[ii] +
@@ -104,23 +97,19 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.
 				V_bb[ii] = Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
 			end
 		end
-		println("--------------------------Forward Pass--------------------------")
 		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time; noise=true)
-		#TODO: try plotting trajectories here
 		Q_new = cost(players, b̄_new, ū_new)
 		# Forwards Pass
 		if Q_new <= Q_old
-			println("Q_new: ", Q_new, ", Q_old: ", Q_old)
-			println(ū_new)
 			Q_old = Q_new
 			b̄ = b̄_new
 			ū = ū_new
 			μᵤ *= 0.75
 			μᵦ *= 0.75
 		else
-			println("increasing regularization")
+			# println("increasing regularization")
 			if μᵤ > 1e10 || μᵦ > 1e10
-				println("μ too large")
+				# println("μ too large")
 				break
 			end
 			μᵤ *= 10 * env.final_time
@@ -131,29 +120,19 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.
 end
 
 function create_policy(nominal_control, feed_forward, feed_backward)
-	println("\nnorm of feed forward: ", norm(feed_forward), "\nnorm of feed_backward: ", norm(feed_backward))
-	
-	show(stdout, "text/plain",  feed_forward)
-	println()
-	show(stdout, "text/plain",  feed_backward)
 	function (δb)
-		# println("norm delta b: ", norm(δb))
-		println("δb")
-		show(stdout, "text/plain",  δb)
-		println()
-		return nominal_control + vec(feed_forward) + feed_backward * δb
+		return nominal_control + .1 * (vec(feed_forward) + feed_backward * δb)
 	end
 end
 
 function simulate(env, players, ū, b̄, time; noise = false)
 	# TODO: its not env state dim but observation dim
-		println("------------------------simulating------------------------")
 	b̄_new = [BlockVector{Float64}(undef, [env.state_dim + env.state_dim^2 for _ in eachindex(players)]) for _ in time:env.final_time]
 	sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in time:env.final_time]
 	ū_actual = [BlockVector{Float64}(undef, [player.action_space for player in players]) for _ in time:env.final_time-1]
 
-	belief_length = length(players[1].belief) # TODO: make adjustable per player
-	b̄_new[1] = BlockVector(vcat([player.history[time][3] for player in players]...),
+	belief_length = length(players[1].belief[Block(1)]) # TODO: make adjustable per player
+	b̄_new[1] = BlockVector(vcat([players[ii].history[time][3] for ii in eachindex(players)]...),
 		[belief_length for player in players])
 	sts[1] .= env.current_state
 
@@ -161,7 +140,7 @@ function simulate(env, players, ū, b̄, time; noise = false)
 	observation_noise = BlockVector(zeros(env.observation_noise_dim * length(players)), [env.observation_noise_dim for _ in 1:length(players)])
 
 	for tt in time:env.final_time-1
-		println("simulating time: ", tt)
+		# println("simulating time: ", tt)
 		if isa(ū, Function)
 			if isnothing(b̄) # first rollout does not have a nominal trajectory
 				ū_actual[tt-time+1] .= vcat([player.history[end][1] for player in players]...)
@@ -180,7 +159,9 @@ function simulate(env, players, ū, b̄, time; noise = false)
 		observations = env.observation_function(states = sts[tt-time+2], m = observation_noise)
 
 		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt, b̄_new[tt-time+1], ū_actual[tt-time+1])
-		println("norms:\n\tAₖ: ", norm(Aₖ), "\n\tMₖ: ", norm(Mₖ), "\n\tHₖ: ", norm(Hₖ), "\n\tNₖ: ", norm(Nₖ), "\n\tKₖ: ", norm(Kₖ))
+		# println("norms:\n\tAₖ: ", norm(Aₖ), "\n\tMₖ: ", norm(Mₖ), "\n\tHₖ: ", norm(Hₖ), "\n\tNₖ: ", norm(Nₖ), "\n\tKₖ: ", norm(Kₖ))
+		# show(stdout, "text/plain", Mₖ)
+		println()
 
 		b̄_new[tt-time+2] .= β
 	end
@@ -246,10 +227,8 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 		states = BlockVector(x[1:length(x̂ₖ)], mean_lengths),
 		m = BlockVector(x[length(x̂ₖ)+1:end], [env.observation_noise_dim for _ in 1:num_players]), block = false)
 
-	# j_cfg = JacobianConfig(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), Chunk{20}())
 
 	f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]))
-	# Has NaNs
 	Aₖ = f_jacobian[:, 1:length(x̂ₖ)]
 	Mₖ = f_jacobian[:, length(x̂ₖ)+length(uₖ)+1:end]
 	h_jacobian = ForwardDiff.jacobian(h, BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)]))
@@ -319,7 +298,7 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 		states = BlockVector(x[Block(1)], mean_lengths),
 		m = BlockVector(x[Block(2)], [env.observation_noise_dim for _ in 1:num_players]), block = false)
 
-	println("gradient at:\n\t\tx̂ₖ: ", round.(x̂ₖ, digits = 5),"\n\t\tûₖ: ", uₖ,"\n\t\tmₖ: ", m)
+	# println("gradient at:\n\t\tx̂ₖ: ", round.(x̂ₖ, digits = 5),"\n\t\tûₖ: ", uₖ,"\n\t\tmₖ: ", m)
 
 	j_cfg = JacobianConfig(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), Chunk{20}())
 	f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), j_cfg)
@@ -346,9 +325,9 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 	temp = vcat([Σ_block[Block(ii, ii)] for ii in eachindex(players)]...)
 	Σ_temp = BlockVector(vec(temp'), [cov_length^2 for _ in eachindex(players)])
 
-	β = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(players)]...),
+	β_new = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(players)]...),
 		[mean_lengths[i] + cov_lengths[i]^2 for i in eachindex(players)])
-	return β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block
+	return β_new, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block
 end
 
 end

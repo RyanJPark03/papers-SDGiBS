@@ -14,8 +14,14 @@ function finite_diff(f, x; ϵ = 1e-8)
         perturbation = ϵ * x[i] / n
         x_perturbed[i] += perturbation
         back_perturbed = f(x_perturbed)
+
+        @assert !(any((x) -> imag(x) != 0.0, back_perturbed))
+
         x_perturbed[i] -= 2 * perturbation
         forward_perturbed = f(x_perturbed)
+
+        @assert !(any((x) -> imag(x) != 0.0, forward_perturbed))
+
         x_perturbed[i] += perturbation
 
         grad[:, :, i] = (back_perturbed - forward_perturbed) / (2ϵ)
