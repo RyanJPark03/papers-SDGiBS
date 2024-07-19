@@ -23,7 +23,7 @@ end
 function active_surveillance_demo_main()
 	open("./out.temp", "w") do file
 		redirect_stdout(file) do 
-			run_active_surveillance_demo(50, .1)
+			run_active_surveillance_demo(50, .05)
 		end
 	end
 end
@@ -45,15 +45,20 @@ function run_active_surveillance_demo(time_steps, τ)
 	belief_coords1 = [[x[3][1] for x in demo.players[1].history], [x[3][2] for x in demo.players[1].history]]
 	belief_coords2 = [[x[3][1] for x in demo.players[2].history], [x[3][2] for x in demo.players[2].history]]
 
+	# cov1 = # TODO: plot cov
+
 	observations1 = [[demo.players[1].history[x][2][1] for x in 2:length(demo.players[1].history)],
 	[demo.players[1].history[x][2][2] for x in 2:length(demo.players[1].history)]]
 	observations2 = [[demo.players[2].history[x][2][1] for x in 2:length(demo.players[1].history)],
 	[demo.players[2].history[x][2][2] for x in 2:length(demo.players[1].history)]]
 
+
+
 	fig = Figure()
 	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
 	scatterlines!(coords1[1],coords1[2]; color = :blue)
 	scatterlines!(belief_coords1[1], belief_coords1[2]; color = (:blue, 0.75), linestyle = :dash)
+	# scatter!(belief_coords1[1], belief_coords1[2]; color = :black, markersize = )
 	# scatterlines!(observations1[1], observations1[2]; color = (:blue, 0.5), linestyle = :dot)
 	scatterlines!(coords2[1], coords2[2]; color = :red)
 	scatterlines!(belief_coords2[1], belief_coords2[2]; color = (:red, 0.75), linestyle = :dash)
@@ -114,7 +119,7 @@ function init(time_steps, τₒ; L::Int = 1)
 
 	function measurement_noise_scaler(state::Vector; surveillance_radius::Int = 10)
 		# Only take x and y coords from state vector
-		n_outer =  0.01 * (norm(state[1:2], 2) - surveillance_radius)^2
+		n_outer =  0.001 * (norm(state[1:2], 2) - surveillance_radius)^2
 		n_outer = max(0.01, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
 		n_outer = min(1000, n_outer) # make sure noise multiplier doesn't get too large
 
@@ -156,8 +161,8 @@ function init(time_steps, τₒ; L::Int = 1)
 	end
 
 	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
-	initial_state[Block(1)] .= [-10.0, 20.0, 0.0, 5.0] # Player 1, surveiller
-	initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 5.0]
+	initial_state[Block(1)] .= [-10.0, 20.0, 0.0, 7.0] # Player 1, surveiller
+	initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 4.0]
 
 	env = init_base_environment(;
 			state_dynamics = state_dynamics,
@@ -197,16 +202,11 @@ function init(time_steps, τₒ; L::Int = 1)
 
 	α₁ = 1.0
 	α₂ = 10.0
-	vₖ_des = 8.0
+	vₖ_des = 2.0
 	function c_coll(β)
-		# "c_coll = exp(-d(xₖ)). Here d(xₖ) is the expcted euclidean distance
-		# until collision between the two agents, taking their outline into account."
-		# TODO wtf does "taking their outline into account" mean???
 		if typeof(β) == BlockVector
-			safety_distance = max(β[Block(1)][5], β[Block(1)][10]) + max(β[Block(2)][5], β[Block(2)][10])
 			return exp(-norm(β[Block(1)][1:2] - β[Block(2)][1:2], 2))
 		else
-			safety_distance = max(β[5], β[10]) + max(β[Int(length(β)//2 + 5)], β[Int(length(β)//2 + 10)])
 			return exp(-norm(β[1:2] - β[Int(length(β)//2 + 1):Int(length(β)//2 + 2)], 2))
 		end
 	end
@@ -238,7 +238,7 @@ function init(time_steps, τₒ; L::Int = 1)
 		final_cost = final_costs[i],
 		action_space = 2,
 		observation_space = 4,
-		default_action = [0.0, -0.01],# accel, steer
+		default_action = [0.0, -0.0],# accel, steer
 		time = env.final_time,
 		num_players = 2) for i in 1:2]
 
