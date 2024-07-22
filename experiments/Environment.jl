@@ -48,6 +48,7 @@ function unroll(env::base_environment, players;
 	cur_beliefs = vcat([player.belief for player in players]...)
 
 	for ii in eachindex(players)
+		println("action for player: ", ii)
 		actions[Block(ii)] .= get_action(players, ii, 1; state = cur_beliefs)
 	end
 

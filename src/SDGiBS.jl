@@ -16,6 +16,7 @@ end
 
 export SDGiBS_solve_action
 function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.0, μᵤ = 1000.0, ϵ = 1e-10)
+	println("calling solver ...")
 	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
 	for ii in eachindex(players)
 		player = players[ii]
@@ -161,7 +162,7 @@ function simulate(env, players, ū, b̄, time; noise = false)
 		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt, b̄_new[tt-time+1], ū_actual[tt-time+1])
 		# println("norms:\n\tAₖ: ", norm(Aₖ), "\n\tMₖ: ", norm(Mₖ), "\n\tHₖ: ", norm(Hₖ), "\n\tNₖ: ", norm(Nₖ), "\n\tKₖ: ", norm(Kₖ))
 		# show(stdout, "text/plain", Mₖ)
-		println()
+		# println()
 
 		b̄_new[tt-time+2] .= β
 	end
