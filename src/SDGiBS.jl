@@ -15,7 +15,7 @@ function belief_update(env, players::Array, observations)
 end
 
 export SDGiBS_solve_action
-function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.0, μᵤ = 1000.0, ϵ = 1e-10)
+function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, μᵤ = 1.0, ϵ = 1e-10)
 	println("calling solver ...")
 	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
 	for ii in eachindex(players)
@@ -53,8 +53,9 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.
 
 	V = map((cᵢ) -> cᵢ(b̄[end]), c)
 	V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
-	V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
+	V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c) # the second player section is the same for v_bb[1] and v_bb[2]...
 
+	cost_vars = DiffResults.HessianResult(x_u)
 	while norm(Q_new - Q_old, 2) > ϵ
 		for tt in env.final_time-1:-1:env.time
 			# πₖ = ūₖ + jₖ + Kₖ * δbₖ
@@ -63,11 +64,10 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.
 
 			x_u .= vcat(b̄[tt - env.time + 1][1:end], u_k(tt - env.time + 1, b̄[tt - env.time + 1])[1:end])
 			Wₖ = W(x_u)
+			Wₛ = finite_diff(W, x_u)
 			for ii in eachindex(players)
-				cost_vars = DiffResults.HessianResult(x_u)
+				
 				cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
-
-				Wₛ = finite_diff(W, x_u)
 				gₛ = ForwardDiff.jacobian(g, x_u)
 
 				Q = DiffResults.value(cost_vars) + V[ii] +
@@ -89,28 +89,42 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1000.
 				Q_uu = Qₛₛ[belief_length+1:end, belief_length+1:end] + μᵤ * I
 
 				jₖ = -Q_uu \ Q_u
+				# Kₖ is non zero in second players spot
+				# in fact Q_uu and Q_ub? is the same as player 1...
 				Kₖ = -Q_uu \ Q_ub # overloaded notation, Kₖ has a different value in belief update
+				# if ii == 2
+				# 	println("creating policy for player two: ")
+				# 	show(stdout, "text/plain", jₖ)
+				# 	println()
+				# 	show(stdout, "text/plain", Kₖ)
+				# 	println()
+				# end
 				π[tt-env.time+1] = create_policy(ū[tt-env.time+1], jₖ, Kₖ)
 
 				# Backwards iteration of value function
 				V[ii] = Q + (Q_u'*jₖ)[1, 1] + (0.5*jₖ'*Q_uu*jₖ)[1, 1]
 				V_b[ii] .= Q_b + Kₖ' * Q_uu * jₖ + Kₖ' * Q_u + Q_ub' * jₖ
-				V_bb[ii] = Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
+				V_bb[ii] .= Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
 			end
 		end
 		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time; noise=true)
+		# println("solving .... new ū:")
+		# show(stdout, "text/plain", ū_new)
+		# println()
 		Q_new = cost(players, b̄_new, ū_new)
+		println("Q_new: ", Q_new, " Q_old: ", Q_old, "\n\t delta = ")
 		# Forwards Pass
 		if Q_new <= Q_old
 			Q_old = Q_new
 			b̄ = b̄_new
 			ū = ū_new
-			μᵤ *= 0.75
-			μᵦ *= 0.75
+			μᵤ *= 0.1
+			μᵦ *= 0.1
 		else
 			# println("increasing regularization")
 			if μᵤ > 1e10 || μᵦ > 1e10
 				# println("μ too large")
+				error("did not converge...")
 				break
 			end
 			μᵤ *= 10 * env.final_time
@@ -122,7 +136,7 @@ end
 
 function create_policy(nominal_control, feed_forward, feed_backward)
 	function (δb)
-		return nominal_control + .1 * (vec(feed_forward) + feed_backward * δb)
+		return nominal_control + .5 * (vec(feed_forward) + feed_backward * δb)
 	end
 end
 
@@ -160,9 +174,6 @@ function simulate(env, players, ū, b̄, time; noise = false)
 		observations = env.observation_function(states = sts[tt-time+2], m = observation_noise)
 
 		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt, b̄_new[tt-time+1], ū_actual[tt-time+1])
-		# println("norms:\n\tAₖ: ", norm(Aₖ), "\n\tMₖ: ", norm(Mₖ), "\n\tHₖ: ", norm(Hₖ), "\n\tNₖ: ", norm(Nₖ), "\n\tKₖ: ", norm(Kₖ))
-		# show(stdout, "text/plain", Mₖ)
-		# println()
 
 		b̄_new[tt-time+2] .= β
 	end
@@ -245,8 +256,6 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 	covs = [Matrix(temp[Block(ii, ii)]) for ii in eachindex(players)]
 	means = [noiseless_x̂ₖ₊₁[sum(mean_lengths[1:ii-1])+1:sum(mean_lengths[1:ii])] for ii in eachindex(players)]
 	g = vcat(vcat(means...), vcat([vec(covs[ii]) for ii in eachindex(covs)]...))
-	# Main.@infiltrate 
-	# Kₖ, Γ is not sym (but second block is sym)
 	if calc_W
 		W = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((sum(mean_lengths .^ 2), sum(mean_lengths))))
 	else

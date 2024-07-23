@@ -39,6 +39,7 @@ end
 
 function unroll(env::base_environment, players;
     noise=true, noise_clip = true, noise_clip_val = .1, noise_scalar=1)
+	println("unrolling")
 	if 1 + env.time > env.final_time
 		println("Time steps exceed final time")
 		return
@@ -48,8 +49,9 @@ function unroll(env::base_environment, players;
 	cur_beliefs = vcat([player.belief for player in players]...)
 
 	for ii in eachindex(players)
-		println("action for player: ", ii)
-		actions[Block(ii)] .= get_action(players, ii, 1; state = cur_beliefs)
+		act = get_action(players, ii, 1; state = cur_beliefs)
+		println("action for player: ", ii, ": ", act)
+		actions[Block(ii)] .= act
 	end
 
 	n = noise_scalar .* rand(Distributions.Normal(), env.dynamics_noise_dim*env.num_agents)

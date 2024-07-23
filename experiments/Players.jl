@@ -1,4 +1,5 @@
 using SDGiBS
+using Distributions
 
 export player_type
 @enum player_type begin
@@ -59,7 +60,7 @@ function init_player(;
 		action_selector = (player::Player, observation::Vector{Float64}) ->
 			rand(action_space)
 	elseif player_type == type_SDGiBS
-		action_selector = (players, ii, time, state) -> get_action(players, ii, time, state)
+		action_selector = (players, ii, time, state) -> get_action(players, ii, time; state)
 
 	else
 		error("Unimplemented player type or unknown player type $player_type")
@@ -74,24 +75,19 @@ end
 
 function handle_SDGiBS_action(players::Array{Player}, env::base_environment,
 	current_player_index::Int, action_selector, time::Int = 1)
-	# probably no π
 	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector)
 	players[current_player_index].predicted_belief = b̄
 	players[current_player_index].predicted_control = ū
-	players[current_player_index].feedback_law = (δb) -> BlockVector(π(δb), [player.action_space for player in players])[Block(ii)]
-	# return players[current_player_index].predicted_control[1]
+	players[current_player_index].feedback_law = π
 end
 
 function handle_SDGiBS_action_coop(players::Array{Player}, env::base_environment, action_selector, time::Int = 1)
-	# probably no π
-	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector)
-	Main.@infiltrate
+	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦ = 1.0, μᵤ = 1.0) # TODO: probably don't want 0.0
 	for ii in eachindex(players)
 		players[ii].predicted_belief = b̄
 		players[ii].predicted_control = ū
-		players[ii].feedback_law = (δb) -> BlockVector(π(δb), [player.action_space for player in players])[Block(ii)]
+		players[ii].feedback_law = [(δb) -> BlockVector(π[jj](δb), [player.action_space for player in players])[Block(ii)] for jj in eachindex(π)]
 	end
-	# return players[current_player_index].predicted_control[1]
 end
 
 function get_nominal_belief(current_player, time)
@@ -99,21 +95,17 @@ function get_nominal_belief(current_player, time)
 end
 
 function get_δb(current_player, time, state)
+	# println("player: ", current_player.player_id, " time: ", time, " norm δb: ", norm(state - get_nominal_belief(current_player, time)))
 	return state - get_nominal_belief(current_player, time)
 end
 
 export get_action
-function get_action(players, ii, time; state=nothing, nominal_state = nothing, δb = nothing)
+function get_action(players, ii, time; state=nothing)
 	# Main.@infiltrate
-	if isnothing(players[ii].feedback_law)
+	if isnothing(players[ii].feedback_law) || isnothing(state)
 		return players[ii].history[end][1]
-	elseif !isnothing(state) && isnothing(nominal_state) && isnothing(δb)
+	else
 		return players[ii].feedback_law[time](get_δb(players[ii], time, state))
-	elseif !isnothing(state) && !isnothing(nominal_state) && isnothing(δb)
-		db = state - nominal_state # TODO: do we get predicted instead of actual anyways?
-		return players[ii].feedback_law(db)
-	else # state and nominal state are nothing, δb is not
-		return players[ii].feedback_law(δb)
 	end
 end
 
@@ -166,11 +158,12 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 	handle_SDGiBS_action_coop(players, env, get_action, env.time)
 
 	# Iterate environment
-	unroll(env, players; noise = true)
+	unroll(env, players; noise = false)
 
 	# Do observations
 	motion_noise = 1.0
-	m = BlockVector(vcat([rand(-motion_noise:motion_noise, env.observation_noise_dim) for _ in 1:env.num_agents]...),
+	obs_noise = 
+	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 5.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
 	[env.observation_noise_dim for _ in 1:env.num_agents])
 
 	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)
@@ -183,7 +176,9 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 	for ii in eachindex(players)
 		player = players[ii]
 		player.belief = new_beliefs[Block(ii)]
-		push!(player.history, [get_action(players, ii, 1; state = old_beliefs), observations[Block(ii)], player.belief])
+		action = get_action(players, ii, 1; state = old_beliefs)
+		# Main.@infiltrate
+		push!(player.history, [action, observations[Block(ii)], player.belief])
 	end
 end
 

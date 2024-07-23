@@ -23,7 +23,7 @@ end
 function active_surveillance_demo_main()
 	open("./out.temp", "w") do file
 		redirect_stdout(file) do 
-			run_active_surveillance_demo(30, .1)
+			run_active_surveillance_demo(20, .4)
 		end
 	end
 end
@@ -75,10 +75,7 @@ function run_active_surveillance_demo(time_steps, τ)
 
 		positions = [belief[1:2] for belief in beliefs]
 		covs = [reshape(belief[5:end], (4, 4)) for belief in beliefs]
-		display(covs[1])
-		display(covs[2])
 		radii = [(cov[1, 1], cov[2, 2]) for cov in covs]
-		display(radii)
 		return positions, radii
 	end
 	player_1_point = @lift Point2f($(player_locations)[1][1][1], $(player_locations)[1][1][2])
@@ -103,6 +100,10 @@ function run_active_surveillance_demo(time_steps, τ)
 	scatterlines!(bx, coords2[1], coords2[2]; color = :red)
 	scatterlines!(bx, belief_coords2[1], belief_coords2[2]; color = (:red, 0.75), linestyle = :dash)
 	arc!(bx, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
+
+	#for sizing:
+	scatter!(ax, belief_coords1[1][end], belief_coords1[2][end]; color = :black, markersize = 1)
+	scatter!(ax, belief_coords2[1][end], belief_coords2[2][end]; color = :black, markersize = 1)
 	return fig
 end
 
@@ -121,8 +122,6 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 			ẋ = [v * cos(θ), v * sin(θ), dv, accel]
 
 			new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[i]) * m[4 * (i - 1) + 1 : 4 * i]
-			# new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + 0 .*  m[4 * (i - 1) + 1 : 4 * i]
-			# new_state[4 * (i - 1) + 3] %= 2π
 		end
 		return new_state
 	end
@@ -140,20 +139,15 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 			x, y, θ, v = states[Block(i)]
 			accel, steer = u[Block(i)]
 
-			# println("steer: ", steer) #steer is going to infinity
-			steer = max(5π/6, min(-5π/6, steer))
-			δv = (abs(steer) < ϵₛ) ? 0.0 : v / (L * tan(steer))
+			δv = v * tan(steer) / L 
 			ẋ = [v * cos(θ), v * sin(θ), δv, accel]# assign 2 5 for drawing
 
 			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
 			if block
 				# new_state[Block(i)] .= states[Block(i)] + τ * ẋ + 0.0 .* m[Block(i)]
 				new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[Block(i)]) * m[Block(i)]
-				new_state[Block(i)][3] %= 2π
 			else
 				new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[Block(i)]) * m[Block(i)]
-				# new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + 0.0 .* m[Block(i)]
-				new_state[4 * (i - 1) + 3] %= 2π
 			end
 		end
 		return new_state
@@ -161,13 +155,17 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 
 	function measurement_noise_scaler1(state::Vector; surveillance_center = [0, 0], surveillance_radius::Int = 10)
 		# Only take x and y coords from state vector
-		n_outer = .05 * (norm(state[1:2] - surveillance_center, 2) - surveillance_radius)^2
-		n_outer = max(0.01, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
-		n_outer = min(1000, n_outer) # make sure noise multiplier doesn't get too large
+		n_outer = .01 * (norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)^2
+		# n_outer = max(0.00001, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
+		# n_outer = min(100, n_outer) # make sure noise multiplier doesn't get too large
 		n = n_outer
 
-        v = .2 * state[4]^2 # velocity scaled noise
-        t = .01 * 360 # noise for theta is 1% of a circle
+        v = 1e-6 * state[4]^2 # velocity scaled noise
+        t = 1e-10 * 360 # noise for theta is 1% of a circle
+		# if typeof(n) == Float64
+		# 	println("n: ", n, " v: ", v, " t: ", t)
+		# end
+		# println("n: ", n, " v: ", v, " t: ", t)
 
         noise = 
 			[
@@ -213,8 +211,8 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	end
 
 	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
-	initial_state[Block(1)] .= [10.0, 20.0, 0.0, 10.0] # Player 1, surveiller
-	initial_state[Block(2)] .= [8.0, 15.0, 0.0, 10.0]
+	initial_state[Block(1)] .= [-8.0, 20.0, 0.0, 10.0] # Player 1, surveiller
+	initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 10.0]
 
 	env = init_base_environment(;
 			state_dynamics = state_dynamics,
@@ -237,24 +235,24 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	initial_beliefs[Block(2)] .= vcat(copy(initial_state[Block(2)]), vec(copy(initial_cov_matrix)))
 
 	function cₖ¹(β, u)
-		R = Matrix(100 * I, 2, 2)
+		R = Matrix(.05 * I, 2, 2)
 		if typeof(u) == BlockVector
-			return u[Block(1)]' * R * u[Block(1)]
+			return u[Block(1)]' * R * u[Block(1)] + cₗ¹(β)
 		else
-			return u[1:2]' * R * u[1:2]
+			return u[1:2]' * R * u[1:2] + cₗ¹(β)
 		end
 	end
-	cost_mult = 10.0
+	aa = 1000.0
 	function cₗ¹(β)
 		if typeof(β) == BlockVector
-			return cost_mult * prod(diag(reshape(β[Block(2)][5:end], (4, 4))))
+			return aa * prod(diag(reshape(β[Block(2)][5:end], (4, 4))))
 		else
-			return cost_mult * prod(diag(reshape(β[Int(length(β)//2 + 5):end], (4, 4))))
+			return aa * prod(diag(reshape(β[Int(length(β)//2 + 5):end], (4, 4))))
 		end
 	end
 
 	α₁ = 1.0
-	α₂ = 10.0
+	α₂ = 100.0
 	vₖ_des = initial_state[Block(2)][4]
 	function c_coll(β)
 		if typeof(β) == BlockVector
@@ -264,8 +262,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		end
 	end
 	function cₖ²(β::T, u::T) where T
-		return 0.0
-		R = Matrix(10 * I, 2, 2)
+		R = Matrix(.1 * I, 2, 2)
 		if typeof(β) == BlockVector
 			return u[Block(2)]' * R * u[Block(2)] + α₁ * (β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
 		else 
@@ -274,7 +271,6 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	end
 
 	function cₗ²(β)
-		return 0.0
 		if typeof(β) == BlockVector
 			return α₁ * norm(β[Block(2)][4] - vₖ_des, 2)^2 + α₂ * c_coll(β)
 		else
