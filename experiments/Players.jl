@@ -82,7 +82,7 @@ function handle_SDGiBS_action(players::Array{Player}, env::base_environment,
 end
 
 function handle_SDGiBS_action_coop(players::Array{Player}, env::base_environment, action_selector, time::Int = 1)
-	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦ = 1.0, μᵤ = 1.0) # TODO: probably don't want 0.0
+	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦ = 1.0, μᵤ = 1.0, horizon = 10) # TODO: probably don't want 0.0
 	for ii in eachindex(players)
 		players[ii].predicted_belief = b̄
 		players[ii].predicted_control = ū
@@ -101,7 +101,8 @@ end
 
 export get_action
 function get_action(players, ii, time; state=nothing)
-	# Main.@infiltrate
+	# println("grabbing action, player: ", ii, " time: ", time)
+	Main.@infiltrate time == 30
 	if isnothing(players[ii].feedback_law) || isnothing(state)
 		return players[ii].history[end][1]
 	else
@@ -156,22 +157,26 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 
 	# Act
 	handle_SDGiBS_action_coop(players, env, get_action, env.time)
-
+	cur_beliefs = get_full_belief_state(players)
+	actions = BlockVector(
+		vcat([get_action(players, ii, 1; state = cur_beliefs) for ii in eachindex(players)]...),
+		[player.action_space for player in players])
+	
 	# Iterate environment
-	unroll(env, players; noise = false)
+	unroll(env, players; noise = true)
 
 	# Do observations
-	motion_noise = 1.0
-	obs_noise = 
-	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 5.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
+	# motion_noise = 1.0
+	# obs_noise = 
+	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 1.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
 	[env.observation_noise_dim for _ in 1:env.num_agents])
 
 	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)
 
 	# Get updated beliefs
-	old_beliefs = vcat([player.belief for player in players]...)
+	old_beliefs = get_full_belief_state(players)
 	# new_beliefs = [SDGiBS.belief_update(env, players, observations)[Block(ii)] for ii in 1:env.num_agents]
-	new_beliefs = SDGiBS.belief_update(env, players, observations)
+	new_beliefs = SDGiBS.belief_update(env, players, observations, actions)
 	
 	for ii in eachindex(players)
 		player = players[ii]
@@ -188,4 +193,9 @@ function get_history(player::Player, time::Int)
 		return player.history
 	end
 	return player.history[time]
+end
+
+export get_full_belief_state
+function get_full_belief_state(players::Array{Player})
+	return vcat([player.belief for player in players]...)
 end

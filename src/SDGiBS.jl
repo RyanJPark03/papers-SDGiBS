@@ -10,13 +10,16 @@ using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 include("FiniteDiff.jl")
 
 export belief_update
-function belief_update(env, players::Array, observations)
-	return calculate_belief_variables(env, players, observations, env.time, nothing, nothing)[1]
+function belief_update(env, players::Array, observations, actions) # TODO: not using obs or actions...
+	return calculate_belief_variables(env, players, observations, env.time, nothing, actions)[1]
 end
 
 export SDGiBS_solve_action
-function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, μᵤ = 1.0, ϵ = 1e-10)
+function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, μᵦ = 1.0, μᵤ = 1.0, ϵ = 1e-10)
 	println("calling solver ...")
+	final_planning_time = min(env.time + horizon, env.final_time)
+	actual_horizon = final_planning_time - env.time
+
 	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
 	for ii in eachindex(players)
 		player = players[ii]
@@ -24,23 +27,23 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, 
 	end
 
 	total_feedback_law = (tt, belief_state) -> vcat([action_selector(players, ii, tt; state = belief_state) for ii in eachindex(players)]...)
-	u_k = (tt, belief_state) -> (tt == env.final_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
-		total_feedback_law(tt, belief_state)
+	u_k = (tt, belief_state) -> (tt == final_planning_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
+		total_feedback_law(tt, belief_state) # TODO: do we get to make an action at the horizon?
 
 	action_length = [player.action_space for player in players]
 
-	b̄, ū, _ = simulate(env, players, u_k, nothing, env.time)
+	b̄, ū, _ = simulate(env, players, u_k, nothing, env.time, final_planning_time)
 	belief_length = length(b̄[1])
 
 	@assert length(b̄) == length(ū) + 1
-	@assert length(b̄) == env.final_time - env.time + 1
+	@assert length(b̄) == actual_horizon + 1
 
 	# Iteration variables
 	Q_old = [Inf for _ in eachindex(players)]
 	Q_new = cost(players, b̄, ū)
 
 	# initialize final answer
-	π::Array{Function} = [() -> zero(sum(action_length)) for _ in env.time:env.final_time-1]
+	π::Array{Function} = [() -> zero(sum(action_length)) for _ in 1:actual_horizon]
 
 	c = [player.final_cost for player in players]
 	ck = [(x_u) -> player.cost(x_u[1:belief_length], x_u[belief_length+1:end]) for player in players]
@@ -49,20 +52,21 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, 
 
 	W = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players)[1]
 	g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players, calc_W = false)[2]
-	x_u = vcat(b̄[end][1:end], u_k(env.final_time, b̄[end]))
-
-	V = map((cᵢ) -> cᵢ(b̄[end]), c)
-	V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
-	V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c) # the second player section is the same for v_bb[1] and v_bb[2]...
+	x_u = vcat(b̄[1][1:end], u_k(1, b̄[end]))
 
 	cost_vars = DiffResults.HessianResult(x_u)
 	while norm(Q_new - Q_old, 2) > ϵ
-		for tt in env.final_time-1:-1:env.time
+		V = map((cᵢ) -> cᵢ(b̄[end]), c)
+		V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
+		V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c) # the second player section is the same for v_bb[1] and v_bb[2]...
+
+		for tt in final_planning_time-1:-1:env.time
+			tt_idx = tt - env.time + 1
 			# πₖ = ūₖ + jₖ + Kₖ * δbₖ
 			# jₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
 			# Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ\_b
 
-			x_u .= vcat(b̄[tt - env.time + 1][1:end], u_k(tt - env.time + 1, b̄[tt - env.time + 1])[1:end])
+			x_u .= vcat(b̄[tt_idx][1:end], u_k(tt_idx, b̄[tt_idx])[1:end])
 			Wₖ = W(x_u)
 			Wₛ = finite_diff(W, x_u)
 			for ii in eachindex(players)
@@ -92,14 +96,8 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, 
 				# Kₖ is non zero in second players spot
 				# in fact Q_uu and Q_ub? is the same as player 1...
 				Kₖ = -Q_uu \ Q_ub # overloaded notation, Kₖ has a different value in belief update
-				# if ii == 2
-				# 	println("creating policy for player two: ")
-				# 	show(stdout, "text/plain", jₖ)
-				# 	println()
-				# 	show(stdout, "text/plain", Kₖ)
-				# 	println()
-				# end
-				π[tt-env.time+1] = create_policy(ū[tt-env.time+1], jₖ, Kₖ)
+				# Main.@infiltrate
+				π[tt_idx] = create_policy(ū[tt_idx], jₖ, Kₖ)
 
 				# Backwards iteration of value function
 				V[ii] = Q + (Q_u'*jₖ)[1, 1] + (0.5*jₖ'*Q_uu*jₖ)[1, 1]
@@ -107,7 +105,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; μᵦ = 1.0, 
 				V_bb[ii] .= Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
 			end
 		end
-		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time; noise=true)
+		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time, final_planning_time; noise=true)
 		# println("solving .... new ū:")
 		# show(stdout, "text/plain", ū_new)
 		# println()
@@ -136,15 +134,15 @@ end
 
 function create_policy(nominal_control, feed_forward, feed_backward)
 	function (δb)
-		return nominal_control + .5 * (vec(feed_forward) + feed_backward * δb)
+		return nominal_control + 0.5 * (vec(feed_forward) + feed_backward * δb)
 	end
 end
 
-function simulate(env, players, ū, b̄, time; noise = false)
+function simulate(env, players, ū, b̄, time, end_time; noise = false)
 	# TODO: its not env state dim but observation dim
-	b̄_new = [BlockVector{Float64}(undef, [env.state_dim + env.state_dim^2 for _ in eachindex(players)]) for _ in time:env.final_time]
-	sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in time:env.final_time]
-	ū_actual = [BlockVector{Float64}(undef, [player.action_space for player in players]) for _ in time:env.final_time-1]
+	b̄_new = [BlockVector{Float64}(undef, [env.state_dim + env.state_dim^2 for _ in eachindex(players)]) for _ in time:end_time]
+	sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in time:end_time]
+	ū_actual = [BlockVector{Float64}(undef, [player.action_space for player in players]) for _ in time:end_time-1]
 
 	belief_length = length(players[1].belief[Block(1)]) # TODO: make adjustable per player
 	b̄_new[1] = BlockVector(vcat([players[ii].history[time][3] for ii in eachindex(players)]...),
@@ -154,7 +152,7 @@ function simulate(env, players, ū, b̄, time; noise = false)
 	dynamics_noise = BlockVector(zeros(env.dynamics_noise_dim * length(players)), [env.dynamics_noise_dim for _ in 1:length(players)])
 	observation_noise = BlockVector(zeros(env.observation_noise_dim * length(players)), [env.observation_noise_dim for _ in 1:length(players)])
 
-	for tt in time:env.final_time-1
+	for tt in time:end_time-1
 		# println("simulating time: ", tt)
 		if isa(ū, Function)
 			if isnothing(b̄) # first rollout does not have a nominal trajectory
@@ -258,11 +256,16 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 	g = vcat(vcat(means...), vcat([vec(covs[ii]) for ii in eachindex(covs)]...))
 	if calc_W
 		W = vcat(sqrt(Kₖ * Hₖ * Γₖ₊₁), zeros((sum(mean_lengths .^ 2), sum(mean_lengths))))
+		Σ_new = (noise) -> g + W * (noise)
+		x_new = env.state_dynamics(x̂ₖ, uₖ, BlockVector([0.0 for _ in 1:env.dynamics_noise_dim*num_players],
+					[env.dynamics_noise_dim for _ in 1:num_players]))
 	else
 		W = nothing
+		Σ_new = nothing
+		x_new = nothing
 	end
 
-	return W, g, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ
+	return W, g, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, Σ_new, x_new
 end
 
 function calculate_belief_variables(env, players, observations, time, β, u_k)
@@ -312,13 +315,13 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 
 	j_cfg = JacobianConfig(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), Chunk{20}())
 	f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]), j_cfg)
-	Aₖ = round.(f_jacobian[:, 1:length(x̂ₖ)], digits = 10)
-	Mₖ = round.(f_jacobian[:, length(x̂ₖ)+length(uₖ)+1:end], digits = 10)
+	Aₖ = round.(f_jacobian[:, 1:length(x̂ₖ)], digits = 100)
+	Mₖ = round.(f_jacobian[:, length(x̂ₖ)+length(uₖ)+1:end], digits = 100)
 
 	h_jacobian = ForwardDiff.jacobian(h, BlockVector(vcat([x̂ₖ, n]...), [length(x̂ₖ), length(n)]))
 
-	Hₖ = round.(h_jacobian[:, 1:length(x̂ₖ)], digits = 10)
-	Nₖ = round.(h_jacobian[:, length(x̂ₖ)+1:end], digits = 10)
+	Hₖ = round.(h_jacobian[:, 1:length(x̂ₖ)], digits = 100)
+	Nₖ = round.(h_jacobian[:, length(x̂ₖ)+1:end], digits = 100)
 
 	Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
 	# Main.@infiltrate any(isnan.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ'))
@@ -328,7 +331,7 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 
 	temp  = env.observation_function(states = noiseless_x̂ₖ₊₁, m = n)
 	x̂ₖ₊₁ = noiseless_x̂ₖ₊₁ + Kₖ * (observations - temp)
-	Σₖ₊₁ = (I - Kₖ * Hₖ) * Γₖ₊₁
+	Σₖ₊₁ = Γₖ₊₁ - Kₖ * Hₖ * Γₖ₊₁
 
 	x̂_temp = BlockVector(x̂ₖ₊₁, mean_lengths)
 	Σ_block = BlockArray(Σₖ₊₁, cov_lengths, cov_lengths)

@@ -1,6 +1,7 @@
 """
 x⁽ⁱ⁾ = [x⁽ⁱ⁾, y⁽ⁱ⁾, θ⁽ⁱ⁾, v⁽ⁱ⁾]
 u⁽ⁱ⁾ = [u_acceleration⁽ⁱ⁾, u_steer⁽ⁱ⁾]
+hrs: 3
 """
 
 
@@ -9,6 +10,8 @@ using LinearAlgebra
 using Distributions
 using GLMakie
 using ProgressBars
+using JuMP
+using OSQP: OSQP
 
 include("Environment.jl")
 include("Players.jl")
@@ -23,17 +26,16 @@ end
 function active_surveillance_demo_main()
 	open("./out.temp", "w") do file
 		redirect_stdout(file) do 
-			run_active_surveillance_demo(20, .4)
+			run_active_surveillance_demo(30, .3)
 		end
 	end
 end
 
 function run_active_surveillance_demo(time_steps, τ)
-	surveillance_center = [0, 0]
+	surveillance_center = [5, 5]
 	surveillance_radius = 10
-
-	demo = init(time_steps, τ; surveillance_center = surveillance_center, surveillance_radius = surveillance_radius,
-	L = 1)
+	
+	demo = init(time_steps, τ; surveillance_center = surveillance_center, surveillance_radius = surveillance_radius, L = 1)
     trajectory = []
     push!(trajectory, demo.env.current_state)
 
@@ -41,20 +43,36 @@ function run_active_surveillance_demo(time_steps, τ)
 		time_step_all_coop(demo.players, demo.env)
         push!(trajectory, demo.env.current_state)
     end
-	# Main.@infiltrate
 	coords1 = [[x[1] for x in trajectory], [x[2] for x in trajectory]]
 	coords2 = [[x[5] for x in trajectory], [x[6] for x in trajectory]]
 
 	belief_coords1 = [[x[3][1] for x in demo.players[1].history], [x[3][2] for x in demo.players[1].history]]
 	belief_coords2 = [[x[3][1] for x in demo.players[2].history], [x[3][2] for x in demo.players[2].history]]
 
-	# cov1 = # TODO: plot cov
-
 	observations1 = [[demo.players[1].history[x][2][1] for x in 2:length(demo.players[1].history)],
 	[demo.players[1].history[x][2][2] for x in 2:length(demo.players[1].history)]]
 	observations2 = [[demo.players[2].history[x][2][1] for x in 2:length(demo.players[1].history)],
 	[demo.players[2].history[x][2][2] for x in 2:length(demo.players[1].history)]]
 
+	costs = []
+	for tt in 1 : demo.env.final_time
+		println("calculating cost for time: ", tt)
+		time_slices = [get_history(player, tt) for player in demo.players]
+
+		beliefs = vcat([time_slice[3] for time_slice in time_slices]...)
+		action = vcat([isnothing(time_slices[ii][1]) ? zeros(demo.players[ii].action_space) : time_slices[ii][1] for ii in eachindex(time_slices)]...)
+
+
+		p2_cov = reshape(beliefs[Int(length(beliefs)//2 + 5):end], (4, 4))
+		println("p2 cov: ")
+		show(stdout, "text/plain", p2_cov)
+		println()
+
+		p1_costs = (;time_dependent_cost = demo.players[1].cost(beliefs, action), final_cost = demo.players[1].final_cost(beliefs))
+		p2_costs = (;time_dependent_cost = demo.players[2].cost(beliefs, action), final_cost = demo.players[2].final_cost(beliefs))
+		push!(costs, (p1_costs, p2_costs))
+	end
+	show(stdout, "text/plain", costs)
 
 
 	fig = Figure()
@@ -68,16 +86,18 @@ function run_active_surveillance_demo(time_steps, τ)
     end
 	player_locations = lift(observable_time) do a
 		time_slices = [get_history(player, a) for player in demo.players]
-		action = [slice[2] for slice in time_slices]
-		println("p2 actions: ")
-		display(action[2])
+		# action = [slice[2] for slice in time_slices]
+		# println("p2 actions: ")
+		# display(action[2])
 		beliefs = [time_slice[3] for time_slice in time_slices]
 
 		positions = [belief[1:2] for belief in beliefs]
 		covs = [reshape(belief[5:end], (4, 4)) for belief in beliefs]
 		radii = [(cov[1, 1], cov[2, 2]) for cov in covs]
+
 		return positions, radii
 	end
+
 	player_1_point = @lift Point2f($(player_locations)[1][1][1], $(player_locations)[1][1][2])
 	player_2_point = @lift Point2f($(player_locations)[1][2][1], $(player_locations)[1][2][2])
 	player_1_cov = @lift getellipsepoints($(player_locations)[1][1][1], $(player_locations)[1][1][2],
@@ -104,12 +124,36 @@ function run_active_surveillance_demo(time_steps, τ)
 	#for sizing:
 	scatter!(ax, belief_coords1[1][end], belief_coords1[2][end]; color = :black, markersize = 1)
 	scatter!(ax, belief_coords2[1][end], belief_coords2[2][end]; color = :black, markersize = 1)
+	# display(fig, fullsreen = true)
 	return fig
 end
 
 function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radius::Int = 10, 
 	L::Int = 1)
-	# τₒ = .1
+	# Magic Numbers
+	p1_effort = 10.0
+	p1_end_cost_weight = 1.0
+	α₁ = .001
+	α₂ = 30.0
+	p2_effort = 1.0
+	vₖ_des = 10.0
+	collision_exponent_multiplier = 0.2
+
+	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
+	initial_state[Block(1)] .= [surveillance_center[1] - 8.0, surveillance_center[2] + 18.0, -0.01, 10.0] # Player 1, surveiller
+	initial_state[Block(2)] .= [surveillance_center[1] - 10.0, surveillance_center[2] + 15.0, -0.01, 10.0]
+
+	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
+	initial_cov_matrix = [
+		10.0 0.0 0.0 0.0;
+		0.0 10.0 0.0 0.0;
+		0.0 0.0 0.006 0.0;
+		0.0 0.0 0.0 0.5;
+	]
+	initial_beliefs[Block(1)] .= vcat(copy(initial_state[Block(1)]), vec(copy(initial_cov_matrix)))
+	initial_beliefs[Block(2)] .= vcat(copy(initial_state[Block(2)]), vec(copy(initial_cov_matrix)))
+
+
 	state_dynamics_noise_scaler = (u) ->  (norm(u)^2)^.25 .* I
 	function state_dynamics(states::Vector{T}, u, m;
 		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true) where T
@@ -154,25 +198,22 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	end
 
 	function measurement_noise_scaler1(state::Vector; surveillance_center = [0, 0], surveillance_radius::Int = 10)
+		# return I
 		# Only take x and y coords from state vector
-		n_outer = .01 * (norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)^2
-		# n_outer = max(0.00001, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
+		n_outer = 10 * abs(norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)
+		# n_outer = max(0.01, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
 		# n_outer = min(100, n_outer) # make sure noise multiplier doesn't get too large
 		n = n_outer
 
-        v = 1e-6 * state[4]^2 # velocity scaled noise
-        t = 1e-10 * 360 # noise for theta is 1% of a circle
-		# if typeof(n) == Float64
-		# 	println("n: ", n, " v: ", v, " t: ", t)
-		# end
-		# println("n: ", n, " v: ", v, " t: ", t)
+        v = abs(1e-3 * state[4]) # velocity scaled noise
+		t = abs(1e-3 * state[3])
 
         noise = 
 			[
 			n 0 0 0; 
 			0 n 0 0; 
-			0 0 v 0; 
-			0 0 0 t
+			0 0 t 0; 
+			0 0 0 v
 			]
 
 		return noise
@@ -210,9 +251,93 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		return observations
 	end
 
-	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
-	initial_state[Block(1)] .= [-8.0, 20.0, 0.0, 10.0] # Player 1, surveiller
-	initial_state[Block(2)] .= [-10.0, 15.0, 0.0, 10.0]
+	function cₖ¹(β, u)
+		# return 0.0
+		R = Matrix(p1_effort * I, 2, 2)
+		if typeof(u) == BlockVector
+			return u[Block(1)]' * R * u[Block(1)]
+		else
+			return u[1:2]' * R * u[1:2]
+		end
+	end
+	
+	function cₗ¹(β)
+		# return 0.0
+		if typeof(β) == BlockVector
+			return p1_end_cost_weight * prod(diag(reshape(β[Block(2)][5:end], (4, 4)))[1:2])
+		else
+			return p1_end_cost_weight * prod(diag(reshape(β[Int(length(β)//2 + 5):end], (4, 4)))[1:2])
+		end
+	end
+
+	function c_coll(β)
+		half_length = Int(length(β)//2)
+		ellipse1 = (β[1:2], reshape(β[5:half_length], (4, 4))[1:2, 1:2])
+		ellipse2 = (β[half_length + 1: half_length + 2], reshape(β[half_length + 5: end], (4, 4))[1:2, 1:2])
+		if overlap(ellipse1, ellipse2)
+			distance = β[1:2] - β[half_length + 1:half_length + 2]
+			return exp(-1.0 * collision_exponent_multiplier * norm(distance, 2))
+		else
+			return 0
+		end
+	end
+
+	function overlap(ellipse1, ellipse2)
+		# Gilitschenski, Igor, and Uwe D. Hanebeck. "A robust computational test for overlap of two arbitrary-dimensional
+		# ellipsoids in fault-detection of kalman filters." 2012 15th International Conference on Information Fusion. IEEE, 2012.
+		c = ellipse1[1]
+		d = ellipse2[1]
+		# Main.@infiltrate
+		A = ellipse1[2]
+		B = ellipse2[2]
+
+		expected_distance = norm(c - d)
+
+		radius_estimate1 = (A[1, 1] + A[2, 2]) / 2.0
+		radius_estimate2 = (B[1, 1] + B[2, 2]) / 2.0
+		min_safety_distance = radius_estimate1 + radius_estimate2
+
+		return expected_distance < min_safety_distance
+
+
+		# model = JuMP.Model()
+		# JuMP.set_optimizer(model, OSQP.Optimizer)
+		# JuMP.set_silent(model)
+		# ϵ = 1e-5
+		# @variable(model, ϵ <= s <= 1-ϵ) 
+		# J = 1 .- (d - c)' * (((1/(1-s)) * (B \ I) + (1/s) * (A \ I)) \ I) * (d - c)
+		# @objective(
+		# 	model,
+		# 	Min,
+		# 	J[1]
+    	# )
+		
+		# # @constraint(model, s >= ϵ, s <= 1-ϵ)
+		# JuMP.optimize!(model)
+		# (JuMP.termination_status(model) == JuMP.MOI.OPTIMAL) ||
+        # 	error("OSQP did not find an optimal solution to this trajectory generation problem.")
+
+		#  return JuMP.value(s) < 0
+	end
+
+	function cₖ²(β::T, u::T) where T
+		# return 0.0
+		R = Matrix(p2_effort * I, 2, 2)
+		if typeof(β) == BlockVector
+			return u[Block(2)]' * R * u[Block(2)] + α₁ * (β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
+		else 
+			return u[3:end]' * R * u[3:end] + α₁ * (β[Int(length(β)//2 + 4)] - vₖ_des)^2 + α₂ * c_coll(β)
+		end
+	end
+
+	function cₗ²(β)
+		# return 0.0
+		if typeof(β) == BlockVector
+			return α₁ * norm(β[Block(2)][4] - vₖ_des, 2)^2 + α₂ * c_coll(β)
+		else
+			return α₁ * norm(β[Int(length(β)//2 + 4)] - vₖ_des, 2)^2 + α₂ * c_coll(β)
+		end
+	end
 
 	env = init_base_environment(;
 			state_dynamics = state_dynamics,
@@ -222,61 +347,8 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		    dynamics_noise_dim = 4,
 			observation_noise_dim = 4,
 			initial_state = initial_state,
-			final_time = time_steps) # 15 if inital action is 0 0.5
+			final_time = time_steps)
 
-	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
-	initial_cov_matrix = [
-		5.0 0.0 0.0 0.0;
-		0.0 5.0 0.0 0.0;
-		0.0 0.0 0.006 0.0;
-		0.0 0.0 0.0 0.5;
-	]
-	initial_beliefs[Block(1)] .= vcat(copy(initial_state[Block(1)]), vec(copy(initial_cov_matrix)))
-	initial_beliefs[Block(2)] .= vcat(copy(initial_state[Block(2)]), vec(copy(initial_cov_matrix)))
-
-	function cₖ¹(β, u)
-		R = Matrix(.05 * I, 2, 2)
-		if typeof(u) == BlockVector
-			return u[Block(1)]' * R * u[Block(1)] + cₗ¹(β)
-		else
-			return u[1:2]' * R * u[1:2] + cₗ¹(β)
-		end
-	end
-	aa = 1000.0
-	function cₗ¹(β)
-		if typeof(β) == BlockVector
-			return aa * prod(diag(reshape(β[Block(2)][5:end], (4, 4))))
-		else
-			return aa * prod(diag(reshape(β[Int(length(β)//2 + 5):end], (4, 4))))
-		end
-	end
-
-	α₁ = 1.0
-	α₂ = 100.0
-	vₖ_des = initial_state[Block(2)][4]
-	function c_coll(β)
-		if typeof(β) == BlockVector
-			return exp(-norm(β[Block(1)][1:2] - β[Block(2)][1:2], 2))
-		else
-			return exp(-norm(β[1:2] - β[Int(length(β)//2 + 1):Int(length(β)//2 + 2)], 2))
-		end
-	end
-	function cₖ²(β::T, u::T) where T
-		R = Matrix(.1 * I, 2, 2)
-		if typeof(β) == BlockVector
-			return u[Block(2)]' * R * u[Block(2)] + α₁ * (β[Block(2)][4] - vₖ_des)^2 + α₂ * c_coll(β)
-		else 
-			return u[3:end]' * R * u[3:end] + α₁ * (β[Int(length(β)//2 + 4)] - vₖ_des)^2 + α₂ * c_coll(β)
-		end
-	end
-
-	function cₗ²(β)
-		if typeof(β) == BlockVector
-			return α₁ * norm(β[Block(2)][4] - vₖ_des, 2)^2 + α₂ * c_coll(β)
-		else
-			return α₁ * norm(β[Int(length(β)//2 + 4)] - vₖ_des, 2)^2 + α₂ * c_coll(β)
-		end
-	end
 	players = [
 		init_player(;
 			player_type = type_SDGiBS,
