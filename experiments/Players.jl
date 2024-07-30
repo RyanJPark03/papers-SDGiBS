@@ -24,7 +24,8 @@ mutable struct Player{}
 	# SDGiBS specific
 	predicted_belief::Vector{Any}
 	predicted_control::Vector{Any}
-	feedback_law::Any
+	feedback_law::Any,
+	solver_iter_work::Array{Any}
 end
 
 export init_player
@@ -70,7 +71,7 @@ function init_player(;
 	Player(player_type, player_id, copy(belief), cost, final_cost,
 		[[copy(default_action), nothing, copy(belief)]], belief_updater, action_selector,
 		action_space, observation_space, predicted_belief, predicted_control,
-		feedback_law)
+		feedback_law, [])
 end
 
 function handle_SDGiBS_action(players::Array{Player}, env::base_environment,
@@ -198,4 +199,28 @@ end
 export get_full_belief_state
 function get_full_belief_state(players::Array{Player})
 	return vcat([player.belief for player in players]...)
+end
+
+function get_belief_mean(player; block = false)
+	if block
+		return BlockVector(player.belief[1:player.observation_space], [player.observation_space])
+	else
+		return player.belief[1:player.observation_space]
+	end
+end
+
+function get_belief_cov(player; block = false)
+	if block
+		return BlockMatrix(player.belief[player.observation_space+1:end], [player.observation_space, player.observation_space])
+	else
+		return player.belief[player.observation_space+1:end]
+	end
+end
+	
+function get_observation_space(player::Player)
+	return player.observation_space
+end
+
+function get_action_space(player::Player)
+	return player.action_space
 end

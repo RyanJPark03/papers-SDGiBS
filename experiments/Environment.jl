@@ -69,3 +69,12 @@ end
 function observations(env::base_environment)
 	return env.observation_function(; states = env.current_state)
 end
+
+
+function num_agents(env::base_environment)
+	return env.num_agents
+end
+
+function state_dim(env::base_environment)
+	return env.state_dim
+end

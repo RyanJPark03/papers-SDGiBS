@@ -8,118 +8,210 @@ using ForwardDiff, DiffResults
 using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 
 include("FiniteDiff.jl")
+# include("AbstractPlayer.jl")
+include("SDGiBSPlayer.jl")
 
+"""
+	Used to update the belief states of an array of players given their observations and their actions
+
+	params:
+		env::Base_Environment - the environment in which the players are playing
+		players::Array{Player} - the players in the game
+		observations<:Vector - the observations of the players
+			Must be in the same order as ``players``, i.e. the first observation must
+			be the observation of the first player
+		actions<:Vector - the actions of the players
+			Must be in the same order as ``players``, i.e. the first action must
+			be the action of the first player
+
+	returns: BlockVector - the updated belief states of the players stacked on each other
+"""
 export belief_update
 function belief_update(env, players::Array, observations, actions) # TODO: not using obs or actions...
 	return calculate_belief_variables(env, players, observations, env.time, nothing, actions)[1]
 end
 
+"""
+	Used to solve for the predicted actions of the players.
+
+	params:
+		players::Array{Player} - the players in the game
+		env::Base_Environment - the environment in which the players are playing
+		get_action::Function - the function used to get the action of a player
+			signature looks like (players::Array{Player}, playe_index::Int, time::Int;
+									state::Vector || BlockVector = belief_state)
+		horizon::Int - the planning horizon
+		μᵦ::Float64 - the regularization parameter for belief. 
+			Penalizes deviations from the nominal beliefs
+		μᵤ::Float64 - the regularization parameter for control.
+			Penalizes large deviations from nominal controls
+		ϵ::Float64 - the convergence threshold for the solver
+	
+	returns:
+		Tuple{BlockVector, BlockVector, Array{Function}}
+		- the predicted beliefs of the players, b̄
+		- the predicted actions of the players, ū
+		- the feedback law of the players, π
+
+"""
 export SDGiBS_solve_action
 function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, μᵦ = 1.0, μᵤ = 1.0, ϵ = 1e-10)
 	println("calling solver ...")
+
+	# Find the actual planning horizon and final time 
+	#	(since horizon may extend past simulation's time interval)
 	final_planning_time = min(env.time + horizon, env.final_time)
 	actual_horizon = final_planning_time - env.time
 
-	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players], [env.state_dim for player in players])
+	# Initialize covariance matrix
+	# 	TODO: this will scale n^3 with number of players in Second Order Formulation...
+	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players],
+		[env.state_dim for player in players])
 	for ii in eachindex(players)
-		player = players[ii]
-		Σₒ[Block(ii, ii)] .= reshape(player.belief[player.observation_space+1:end], (player.observation_space, player.observation_space))
+		Σₒ[Block(ii, ii)] .= reshape(get_belief_cov(players[ii]))
 	end
 
+	# Setup convenience functions to access player's predicted actions
 	total_feedback_law = (tt, belief_state) -> vcat([action_selector(players, ii, tt; state = belief_state) for ii in eachindex(players)]...)
 	u_k = (tt, belief_state) -> (tt == final_planning_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
-		total_feedback_law(tt, belief_state) # TODO: do we get to make an action at the horizon?
+		total_feedback_law(tt, belief_state) 
 
-	action_length = [player.action_space for player in players]
-
+	# Initial nominal trajectory
 	b̄, ū, _ = simulate(env, players, u_k, nothing, env.time, final_planning_time)
-	belief_length = length(b̄[1])
 
+	# Convenience variables
+	N = num_agents(env)
+	ηᵤ = sum([get_action_space(player) for player in players])
+	η_z	 = sum([get_observation_space(player) for player in players])
+	η_zz = sum([get_observation_space(player)^2 for player in players])
+	ηₓ = state_dim(env) * N
+	ηₓₓ = state_dim(env)^2 * N
+	c = [player.final_cost for player in players]
+	ck = [(x_u) -> player.cost(x_u[1:ηₓ + ηₓₓ], x_u[ηₓ + ηₓₓ+1:end]) for player in players]
+
+	# Sanity check
 	@assert length(b̄) == length(ū) + 1
 	@assert length(b̄) == actual_horizon + 1
 
 	# Iteration variables
 	Q_old = [Inf for _ in eachindex(players)]
 	Q_new = cost(players, b̄, ū)
-
-	# initialize final answer
-	π::Array{Function} = [() -> zero(sum(action_length)) for _ in 1:actual_horizon]
-
-	c = [player.final_cost for player in players]
-	ck = [(x_u) -> player.cost(x_u[1:belief_length], x_u[belief_length+1:end]) for player in players]
-
-	ηₓ = sum([player.observation_space for player in players])
-
-	W = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players)[1]
-	g = (x) -> calculate_matrix_belief_variables(x[1:belief_length], x[belief_length+1:end]; env = env, players = players, calc_W = false)[2]
-	x_u = vcat(b̄[1][1:end], u_k(1, b̄[end]))
-
 	cost_vars = DiffResults.HessianResult(x_u)
 	iter = 0
+
+	# initialize final answer
+	π::Array{Function} = [() -> zero(ηᵤ) for _ in 1:actual_horizon]
+
+	# Functions to grab matrix form of belief update
+	#	bₖ₊₁ ≈ gₖ + Wₖ * Εₖ, where Εₖ ~ N(0, I)
+	W = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players)[1]
+	g = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players, calc_W = false)[2]
+	
+
+	# Preallocations: # TODO: Make all the functions in-place 
+	V = [0.0 for _ in 1:N]
+	V_b = [zeros(ηₓ + ηₓₓ) for _ in 1:N]
+	V_bb = [zeros((ηₓ + ηₓₓ, ηₓ + ηₓₓ)) for _ in 1:N]
+	x_u = zeros(ηₓ + ηᵤ)
+	Wₖ = zeros((ηₓ + ηₓₓ, ηₓ))
+	Wₛ = zeros((ηₓ + ηₓₓ, ηₓ, ηₓ + ηᵤ))
+	gₛ = zeros((ηₓ + ηₓₓ, ηₓ + ηᵤ))
+	tt_idx = 0
+	Qⁱ = zeros(N)
+	Qₛⁱ = [zeros(ηₓ + ηₓₓ) for _ in 1:N]
+	Qₛₛⁱ = [zeros((ηₓ + ηₓₓ, ηₓ + ηₓₓ)) for _ in 1:N]
+	Q_bⁱ = [zeros(ηₓ + ηₓₓ) for _ in 1:N]
+	Q_bbⁱ = [zeros((ηₓ + ηₓₓ, ηₓ + ηₓₓ)) for _ in 1:N]
+	Q̂_u = zeros(ηᵤ)
+	Q_uⁱ = [zeros(ηᵤ) for _ in 1:N]
+	Q̂_uu = zeros((ηᵤ, ηᵤ))
+	Q_uuⁱ = [zeros((ηᵤ, ηᵤ)) for _ in 1:N]
+	Q̂_ub = zeros((ηᵤ, ηₓ + ηₓₓ))
+	Q_ubⁱ = [zeros((ηᵤ, ηₓ + ηₓₓ)) for _ in 1:N]
+	jₖ = zeros(ηᵤ)
+	Kₖ = zeros((ηᵤ, ηₓ + ηₓₓ))
+
 	while norm(Q_new - Q_old, 2) > ϵ
+		# Backward Pass
 		iter += 1
-		V = map((cᵢ) -> cᵢ(b̄[end]), c)
-		V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
-		V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c) # the second player section is the same for v_bb[1] and v_bb[2]...
+
+		# Value function termination conditions
+		V .= map((cᵢ) -> cᵢ(b̄[end]), c)
+		V_b .= map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
+		# TODO: check if below is still true 
+		# the second player section is the same for v_bb[1] and v_bb[2]...
+		V_bb .= map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
 
 		for tt in final_planning_time-1:-1:env.time
 			tt_idx = tt - env.time + 1
-			# πₖ = ūₖ + jₖ + Kₖ * δbₖ
-			# jₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ
-			# Kₖ = -Q̂⁻¹ᵤᵤ * Q̂ᵤ\_b
 
+			# Construct concatenated state-action vector
 			x_u .= vcat(b̄[tt_idx][1:end], u_k(tt_idx, b̄[tt_idx])[1:end])
+
+			# Calculate Wₖ and gₖ # TODO: in place
 			Wₖ = W(x_u)
 			Wₛ = finite_diff(W, x_u)
-			for ii in eachindex(players)
-				
+			gₛ = ForwardDiff.jacobian(g, x_u)
+
+			for ii in 1:N
 				cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
-				gₛ = ForwardDiff.jacobian(g, x_u)
-
-				Q = DiffResults.value(cost_vars) + V[ii] +
-					0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:env.state_dim])
-
-				Qₛ = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
-					 sum([Wₛ[:, j, :]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
-
-				Q_b = Qₛ[1:belief_length, :]
-				Q_u = Qₛ[belief_length+1:end, :] # skip elems wrt belief
-
+				Qⁱ[ii] = DiffResults.value(cost_vars) + V[ii] +
+					0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:ηₓ])
+				Qₛⁱ[ii] = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
+					sum([Wₛ[:, j, :]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
 				# Belief regularizatin: (V_bb[ii] + μ * I) instead of V_bb[ii]
-				Qₛₛ = DiffResults.hessian(cost_vars) + gₛ' * (V_bb[ii] + μᵦ * I) * gₛ +
-					  sum([Wₛ[:, j, :]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, j, :] for j in 1:ηₓ])
+				Qₛₛⁱ[ii] = DiffResults.hessian(cost_vars) + gₛ' * (V_bb[ii] + μᵦ * I) * gₛ +
+					sum([Wₛ[:, j, :]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, j, :] for j in 1:ηₓ])
+					
+				prev_action_spaces = sum(action_space[1:ii - 1])
+				prev_and_cur_action_spaces = sum(action_space[1:ii])
 
-				Q_bb = Qₛₛ[1:belief_length, 1:belief_length]
-				# Control regularization
-				Q_ub = Qₛₛ[belief_length+1:end, 1:belief_length]
-				Q_uu = Qₛₛ[belief_length+1:end, belief_length+1:end] + μᵤ * I
-
-				jₖ = -Q_uu \ Q_u
-				# Kₖ is non zero in second players spot
-				# in fact Q_uu and Q_ub? is the same as player 1...
-				Kₖ = -Q_uu \ Q_ub # overloaded notation, Kₖ has a different value in belief update
-				# Main.@infiltrate
-				π[tt_idx] = create_policy(ū[tt_idx], jₖ, Kₖ)
-
-				# Backwards iteration of value function
-				V[ii] = Q + (Q_u'*jₖ)[1, 1] + (0.5*jₖ'*Q_uu*jₖ)[1, 1]
-				V_b[ii] .= Q_b + Kₖ' * Q_uu * jₖ + Kₖ' * Q_u + Q_ub' * jₖ
-				V_bb[ii] .= Q_bb + Kₖ' * Q_uu * Kₖ + Kₖ' * Q_ub + Q_ub' * Kₖ
+				Q̂_u[prev_action_spaces+1:prev_and_cur_action_spaces] =
+					Qₛ[ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces+1, :]
+				Q̂_uu[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
+					Qₛₛ[ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces+1, ηₓ+ηₓₓ+1:end]
+				Q̂_ub[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
+					Qₛₛ[ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces+1, 1:ηₓ+ηₓₓ]
+				
+				Q_bⁱ[ii] = Qₛ[1:ηₓ + ηₓₓ, :]
+				Q_bbⁱ[ii] = Qₛₛ[1:ηₓ + ηₓₓ, 1:ηₓ + ηₓₓ]
+				Q_uⁱ[ii] = Qₛ[ηₓ + ηₓₓ + 1:end, :]
+				Q_uuⁱ[ii] = Qₛₛ[ηₓ + ηₓₓ + 1:end, ηₓ + ηₓₓ + 1:end]
+				Q_ubⁱ[ii] = Qₛₛ[ηₓ + ηₓₓ + 1:end, 1:ηₓ + ηₓₓ]
 			end
+
+			# Control regularization
+			Q̂_uu += μᵤ * I
+			jₖ .= -Q̂_uu \ Q̂_u
+			# TODO: Check if below is true
+			# Kₖ is non zero in second players spot
+			# in fact Q_uu and Q_ub? is the same as player 1...
+			Kₖ .= -Q̂_uu \ Q̂_ub # overloaded notation, Kₖ has a different value in belief update
+			π[tt_idx] = create_policy(ū[tt_idx], jₖ, Kₖ)
+
+			# Backwards iteration of value function
+			for ii in 1:N
+				V[ii] = Qⁱ[ii] + (Q_uⁱ[ii]'*jₖ)[1, 1] + (0.5*jₖ'*Q_uuⁱ[ii]*jₖ)[1, 1]
+				V_b[ii] .= Q_bⁱ[ii] + Kₖ' * Q_uuⁱ[ii] * jₖ + Kₖ' * Q_uⁱ[ii] + Q_ubⁱ[ii]' * jₖ
+				V_bb[ii] .= Q_bbⁱ[ii] + Kₖ' * Q_uuⁱ[ii] * Kₖ + Kₖ' * Q_ubⁱ[ii] + Q_ubⁱ[ii]' * Kₖ
+			end
+			
 		end
+		# Forwards Pass
+
 		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time, final_planning_time; noise=true)
 		# println("solving .... new ū:")
 		# show(stdout, "text/plain", ū_new)
 		# println()
 		Q_new = cost(players, b̄_new, ū_new)
 		println("Q_new: ", Q_new, " Q_old: ", Q_old, "\n\t delta = ")
-		# Forwards Pass
+		
 		if Q_new <= Q_old
 			Q_old = Q_new
 			b̄ = b̄_new
 			ū = ū_new
-			μᵤ *= 0.1
-			μᵦ *= 0.1
+			μᵤ *= 0.5
+			μᵦ *= 0.5
 		else
 			# println("increasing regularization")
 			if μᵤ > 1e10 || μᵦ > 1e10
@@ -127,8 +219,8 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				error("did not converge...")
 				break
 			end
-			μᵤ *= 10 
-			μᵦ *= 10
+			μᵤ *= 2
+			μᵦ *= 2
 		end
 	end
 	println("solver ran for ", iter, " iterations")
@@ -137,7 +229,7 @@ end
 
 function create_policy(nominal_control, feed_forward, feed_backward)
 	function (δb)
-		return nominal_control + 0.5 * (vec(feed_forward) + feed_backward * δb)
+		return nominal_control + 1.0 * (vec(feed_forward) + feed_backward * δb)
 	end
 end
 
