@@ -55,7 +55,9 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	x_u = vcat(b̄[1][1:end], u_k(1, b̄[end]))
 
 	cost_vars = DiffResults.HessianResult(x_u)
+	iter = 0
 	while norm(Q_new - Q_old, 2) > ϵ
+		iter += 1
 		V = map((cᵢ) -> cᵢ(b̄[end]), c)
 		V_b = map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
 		V_bb = map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c) # the second player section is the same for v_bb[1] and v_bb[2]...
@@ -125,10 +127,11 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				error("did not converge...")
 				break
 			end
-			μᵤ *= 10 * env.final_time
-			μᵦ *= 10 * env.final_time
+			μᵤ *= 10 
+			μᵦ *= 10
 		end
 	end
+	println("solver ran for ", iter, " iterations")
 	return b̄, ū, π
 end
 

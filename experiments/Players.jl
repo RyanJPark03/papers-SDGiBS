@@ -82,7 +82,7 @@ function handle_SDGiBS_action(players::Array{Player}, env::base_environment,
 end
 
 function handle_SDGiBS_action_coop(players::Array{Player}, env::base_environment, action_selector, time::Int = 1)
-	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦ = 1.0, μᵤ = 1.0, horizon = 10) # TODO: probably don't want 0.0
+	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦ = 1.0, μᵤ = 1.0, horizon = 15) # TODO: probably don't want 0.0
 	for ii in eachindex(players)
 		players[ii].predicted_belief = b̄
 		players[ii].predicted_control = ū
@@ -163,14 +163,14 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 		[player.action_space for player in players])
 	
 	# Iterate environment
-	unroll(env, players; noise = true)
+	unroll(env, players; noise = false, noise_clip = false, noise_clip_val = 0.1)
 
 	# Do observations
 	# motion_noise = 1.0
 	# obs_noise = 
 	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 1.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
 	[env.observation_noise_dim for _ in 1:env.num_agents])
-
+	Main.@infiltrate 
 	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)
 
 	# Get updated beliefs

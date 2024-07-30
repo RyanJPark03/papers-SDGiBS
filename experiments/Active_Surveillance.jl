@@ -200,7 +200,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	function measurement_noise_scaler1(state::Vector; surveillance_center = [0, 0], surveillance_radius::Int = 10)
 		# return I
 		# Only take x and y coords from state vector
-		n_outer = 10 * abs(norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)
+		n_outer = 100 * abs(norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)
 		# n_outer = max(0.01, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
 		# n_outer = min(100, n_outer) # make sure noise multiplier doesn't get too large
 		n = n_outer
