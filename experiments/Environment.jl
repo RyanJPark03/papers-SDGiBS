@@ -65,6 +65,7 @@ function unroll(env::base_environment, players;
 	dyn_noise = BlockVector(dn, [env.dynamics_noise_dim for _ in 1:env.num_agents])
 	env.current_state = env.state_dynamics(env.current_state, actions, dyn_noise)
 	push!(env.history, env.current_state)
+	println("new state: ", env.current_state)
 
 	env.time += 1
 end

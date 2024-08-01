@@ -131,8 +131,8 @@ end
 function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radius::Int = 10, 
 	L::Int = 1)
 	# Magic Numbers
-	p1_effort = .001
-	p1_end_cost_weight = .0001
+	p1_effort = .1
+	p1_end_cost_weight = 1.0
 	α₁ = 0.001
 	α₂ = 30.0
 	p2_effort = 1.0

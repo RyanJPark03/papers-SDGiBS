@@ -83,7 +83,7 @@ function handle_SDGiBS_action(players::Array{Player}, env::base_environment,
 end
 
 function handle_SDGiBS_action_coop(players::Array{Player}, env::base_environment, action_selector, time::Int = 1)
-	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦ = 1.0, μᵤ = 1.0, horizon = 15) # TODO: probably don't want 0.0
+	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦₒ = 1.0, μᵤₒ = 1.0, horizon = 10)
 	for ii in eachindex(players)
 		players[ii].predicted_belief = b̄
 		players[ii].predicted_control = ū

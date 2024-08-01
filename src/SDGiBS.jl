@@ -59,9 +59,12 @@ end
 """
 
 export SDGiBS_solve_action
-function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, μᵦ = 1.0, μᵤ = 1.0, ϵ = 1e-10)
+function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, μᵦₒ = 1.0, μᵤₒ = 1.0, ϵ = 1e-4)
 	println("calling solver ...")
-	fig = Figure()
+
+	μᵦ = [copy(μᵦₒ) for _ in 1:length(players)]
+	μᵤ = [copy(μᵤₒ) for _ in 1:length(players)]
+	# fig = Figure()
 	solver_iter_solutions = []
 
 	# Convenience variables
@@ -142,7 +145,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	W = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players)[1]
 	g = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players, calc_W = false)[2]
 
-	while norm(deltaQ, 2) > ϵ && iter < 200
+	while norm(deltaQ, 2) > ϵ && iter < 100
 		# Backward Pass
 		println("iter: ", iter)
 		iter += 1
@@ -173,14 +176,15 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				Qₛⁱ[ii] = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
 					sum([Wₛ[:, j, :]' * V_bb[ii] * Wₖ[:, j] for j in 1:ηₓ])
 				# Belief regularizatin: (V_bb[ii] + μ * I) instead of V_bb[ii]
-				Qₛₛⁱ[ii] = DiffResults.hessian(cost_vars) + gₛ' * (V_bb[ii] + μᵦ * I) * gₛ +
-					sum([Wₛ[:, j, :]' * (V_bb[ii] + μᵦ * I) * Wₛ[:, j, :] for j in 1:ηₓ])
+				Qₛₛⁱ[ii] = DiffResults.hessian(cost_vars) + gₛ' * (V_bb[ii] + μᵦ[ii] * I) * gₛ +
+					sum([Wₛ[:, j, :]' * (V_bb[ii] + μᵦ[ii] * I) * Wₛ[:, j, :] for j in 1:ηₓ])
 					
 				prev_action_spaces = sum(action_space[1:ii - 1])
 				prev_and_cur_action_spaces = sum(action_space[1:ii])
 
 				Q̂_u[prev_action_spaces+1:prev_and_cur_action_spaces] =
 					Qₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, :]
+				# Control regularization
 				Q̂_uu[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
 					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, ηₓ+ηₓₓ+1:end]
 				Q̂_ub[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
@@ -193,8 +197,8 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				Q_ubⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, 1:ηₓ + ηₓₓ]
 			end
 
-			# Control regularization
-			Q̂_uu += μᵤ * I
+			# TODO: Control regularization
+			# Q̂_uu += μᵤ * I
 			jₖ .= -Q̂_uu \ Q̂_u
 			# TODO: Check if below is true
 			# Kₖ is non zero in second players spot
@@ -212,30 +216,33 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 		end
 		# Forwards Pass
 
-		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time, final_planning_time; noise=true)
+		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time, final_planning_time; noise=false)
 		println("solving .... new ū:")
 		show(stdout, "text/plain", ū_new)
 		println()
 		
 		Q_new = cost(players, b̄_new, ū_new)
 		println("Q_new: ", Q_new, " Q_old: ", Q_old, "\n\t delta = ", Q_new - Q_old)
-		
-		if any([Q_new[ii] <= Q_old[ii] for ii in eachindex(players)])
-			println("decreasing regularization")
-			deltaQ = Q_new - Q_old
-			Q_old = Q_new
-			b̄ = b̄_new
-			ū = ū_new
-			μᵤ /= 1.0
-			μᵦ /= 1.0
-		else
-			println("increasing regularization")
-			if μᵤ > 1e10 || μᵦ > 1e10
-				error("did not converge...")
-				break
+		println("μᵤ: ", μᵤ, " μᵦ: ", μᵦ)
+
+		for ii in eachindex(players)
+			if Q_new[ii] > Q_old[ii]
+				println("increasing regularization for player ", ii)
+				μᵤ[ii] *= 1.5
+				μᵦ[ii] *= 1.5
+			else
+				println("decreasing regularization for player ", ii)
+				deltaQ = Q_new - Q_old
+				Q_old = Q_new
+				b̄ = b̄_new
+				ū = ū_new
+				μᵤ[ii] /= 1.5
+				μᵦ[ii] /= 1.5
 			end
-			μᵤ *= 1.0
-			μᵦ *= 1.0
+		end
+		if any([μᵤ[ii] > 1e10 || μᵦ[ii] > 1e10 || μᵤ[ii] < 1e-10 || μᵦ[ii] < 1e-10 for ii in eachindex(players)]) 
+			error("did not converge...")
+			break
 		end
 	end
 	println("solver ran for ", iter, " iterations")
@@ -271,8 +278,11 @@ function simulate(env, players, ū, b̄, time, end_time; noise = false)
 				ū_actual[tt-time+1] .= ū(tt, δb = b̄_new[tt-time+1] - b̄[tt-time+1])
 			end
 		elseif typeof(ū) == Vector{Function}
+			println("\tb's: ", b̄_new[tt-time+1], " - ", b̄[tt-time+1])
+			println("\tδb = ", b̄_new[tt-time+1] - b̄[tt-time+1])
 			ū_actual[tt-time+1] .= ū[tt-time+1](b̄_new[tt-time+1] - b̄[tt-time+1])
 		end
+		println("\tu_acutal: ", ū_actual[tt-time+1])
 
 		if noise 
 			dynamics_noise .= [rand(Distributions.Normal()) for _ in 1:env.dynamics_noise_dim*length(players)]
@@ -280,7 +290,8 @@ function simulate(env, players, ū, b̄, time, end_time; noise = false)
 		end
 		sts[tt-time+2] .= env.state_dynamics(sts[tt-time+1], ū_actual[tt-time+1], dynamics_noise)
 		observations = env.observation_function(states = sts[tt-time+2], m = observation_noise)
-
+		println("\tnew state: ", sts[tt-time+2])
+		println("\tobservations: ", observations)
 		β, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂ₖ₊₁, Σₖ₊₁ = calculate_belief_variables(env, players, observations, tt, b̄_new[tt-time+1], ū_actual[tt-time+1])
 
 		b̄_new[tt-time+2] .= β
@@ -434,7 +445,7 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 	Nₖ = round.(h_jacobian[:, length(x̂ₖ)+1:end], digits = 100)
 
 	Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
-	# Main.@infiltrate any(isnan.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ'))
+	Main.@infiltrate any(isnan.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ'))
 	Kₖ = Γₖ₊₁ * Hₖ' * (round.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ', digits = 100) \ I)
 
 	noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)
@@ -450,6 +461,8 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 
 	β_new = BlockVector(vcat([vcat(x̂_temp[Block(ii)], Σ_temp[Block(ii)]) for ii in eachindex(players)]...),
 		[mean_lengths[i] + cov_lengths[i]^2 for i in eachindex(players)])
+	# Main.@infiltrate any(isnan.(β_new))
+	# Main.@infiltrate any(isinf.(β_new))
 	return β_new, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block
 end
 
