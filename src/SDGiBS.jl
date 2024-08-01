@@ -3,13 +3,15 @@ module SDGiBS
 using BlockArrays
 using LinearAlgebra
 using Distributions
+using GLMakie
 
 using ForwardDiff, DiffResults
 using ForwardDiff: Chunk, JacobianConfig, HessianConfig
 
 include("FiniteDiff.jl")
+# include("../experiments/Players.jl")
 # include("AbstractPlayer.jl")
-include("SDGiBSPlayer.jl")
+# include("SDGiBSPlayer.jl")
 
 """
 	Used to update the belief states of an array of players given their observations and their actions
@@ -26,8 +28,9 @@ include("SDGiBSPlayer.jl")
 
 	returns: BlockVector - the updated belief states of the players stacked on each other
 """
+
 export belief_update
-function belief_update(env, players::Array, observations, actions) # TODO: not using obs or actions...
+function belief_update(env, players::Array, observations, actions) 
 	return calculate_belief_variables(env, players, observations, env.time, nothing, actions)[1]
 end
 
@@ -54,65 +57,30 @@ end
 		- the feedback law of the players, π
 
 """
+
 export SDGiBS_solve_action
 function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, μᵦ = 1.0, μᵤ = 1.0, ϵ = 1e-10)
 	println("calling solver ...")
-
-	# Find the actual planning horizon and final time 
-	#	(since horizon may extend past simulation's time interval)
-	final_planning_time = min(env.time + horizon, env.final_time)
-	actual_horizon = final_planning_time - env.time
-
-	# Initialize covariance matrix
-	# 	TODO: this will scale n^3 with number of players in Second Order Formulation...
-	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players],
-		[env.state_dim for player in players])
-	for ii in eachindex(players)
-		Σₒ[Block(ii, ii)] .= reshape(get_belief_cov(players[ii]))
-	end
-
-	# Setup convenience functions to access player's predicted actions
-	total_feedback_law = (tt, belief_state) -> vcat([action_selector(players, ii, tt; state = belief_state) for ii in eachindex(players)]...)
-	u_k = (tt, belief_state) -> (tt == final_planning_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
-		total_feedback_law(tt, belief_state) 
-
-	# Initial nominal trajectory
-	b̄, ū, _ = simulate(env, players, u_k, nothing, env.time, final_planning_time)
+	fig = Figure()
+	solver_iter_solutions = []
 
 	# Convenience variables
-	N = num_agents(env)
-	ηᵤ = sum([get_action_space(player) for player in players])
-	η_z	 = sum([get_observation_space(player) for player in players])
-	η_zz = sum([get_observation_space(player)^2 for player in players])
-	ηₓ = state_dim(env) * N
-	ηₓₓ = state_dim(env)^2 * N
+	N = env.num_agents
+	action_space = [player.action_space for player in players]
+	ηᵤ = sum(action_space)
+	η_z	 = sum([player.observation_space for player in players])
+	η_zz = sum([player.observation_space^2 for player in players])
+	ηₓ = env.state_dim * N
+	ηₓₓ = env.state_dim^2 * N
 	c = [player.final_cost for player in players]
 	ck = [(x_u) -> player.cost(x_u[1:ηₓ + ηₓₓ], x_u[ηₓ + ηₓₓ+1:end]) for player in players]
-
-	# Sanity check
-	@assert length(b̄) == length(ū) + 1
-	@assert length(b̄) == actual_horizon + 1
-
-	# Iteration variables
-	Q_old = [Inf for _ in eachindex(players)]
-	Q_new = cost(players, b̄, ū)
-	cost_vars = DiffResults.HessianResult(x_u)
-	iter = 0
-
-	# initialize final answer
-	π::Array{Function} = [() -> zero(ηᵤ) for _ in 1:actual_horizon]
-
-	# Functions to grab matrix form of belief update
-	#	bₖ₊₁ ≈ gₖ + Wₖ * Εₖ, where Εₖ ~ N(0, I)
-	W = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players)[1]
-	g = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players, calc_W = false)[2]
 	
 
 	# Preallocations: # TODO: Make all the functions in-place 
 	V = [0.0 for _ in 1:N]
 	V_b = [zeros(ηₓ + ηₓₓ) for _ in 1:N]
 	V_bb = [zeros((ηₓ + ηₓₓ, ηₓ + ηₓₓ)) for _ in 1:N]
-	x_u = zeros(ηₓ + ηᵤ)
+	x_u = zeros(ηₓ + ηₓₓ + ηᵤ)
 	Wₖ = zeros((ηₓ + ηₓₓ, ηₓ))
 	Wₛ = zeros((ηₓ + ηₓₓ, ηₓ, ηₓ + ηᵤ))
 	gₛ = zeros((ηₓ + ηₓₓ, ηₓ + ηᵤ))
@@ -131,8 +99,52 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	jₖ = zeros(ηᵤ)
 	Kₖ = zeros((ηᵤ, ηₓ + ηₓₓ))
 
-	while norm(Q_new - Q_old, 2) > ϵ
+
+	# Find the actual planning horizon and final time 
+	#	(since horizon may extend past simulation's time interval)
+	final_planning_time = min(env.time + horizon, env.final_time)
+	actual_horizon = final_planning_time - env.time
+
+	# Initialize covariance matrix
+	# 	TODO: this will scale n^3 with number of players in Second Order Formulation...
+	Σₒ = BlockArray{Float64}(undef, [env.state_dim for player in players],
+		[env.state_dim for player in players])
+	for ii in eachindex(players)
+		Σₒ[Block(ii, ii)] .= reshape(players[ii].belief[env.state_dim+1:end], tuple(env.state_dim, env.state_dim))
+	end
+
+	# Setup convenience functions to access player's predicted actions
+	total_feedback_law = (tt, belief_state) -> vcat([action_selector(players, ii, tt; state = belief_state) for ii in eachindex(players)]...)
+	u_k = (tt, belief_state) -> (tt == final_planning_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
+		total_feedback_law(tt, belief_state) 
+
+	# Initial nominal trajectory
+	b̄, ū, _ = simulate(env, players, u_k, nothing, env.time, final_planning_time)
+	push!(solver_iter_solutions, get_plottables(b̄, ū))
+
+
+	# Sanity check
+	@assert length(b̄) == length(ū) + 1
+	@assert length(b̄) == actual_horizon + 1
+
+	# Iteration variables
+	Q_old = [Inf for _ in eachindex(players)]
+	Q_new = cost(players, b̄, ū)
+	deltaQ = Q_new - Q_old
+	cost_vars = DiffResults.HessianResult(x_u)
+	iter = 0
+
+	# initialize final answer
+	π::Array{Function} = [() -> zero(ηᵤ) for _ in 1:actual_horizon]
+
+	# Functions to grab matrix form of belief update
+	#	bₖ₊₁ ≈ gₖ + Wₖ * Εₖ, where Εₖ ~ N(0, I)
+	W = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players)[1]
+	g = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players, calc_W = false)[2]
+
+	while norm(deltaQ, 2) > ϵ && iter < 200
 		# Backward Pass
+		println("iter: ", iter)
 		iter += 1
 
 		# Value function termination conditions
@@ -146,6 +158,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 			tt_idx = tt - env.time + 1
 
 			# Construct concatenated state-action vector
+			# Main.@infiltrate
 			x_u .= vcat(b̄[tt_idx][1:end], u_k(tt_idx, b̄[tt_idx])[1:end])
 
 			# Calculate Wₖ and gₖ # TODO: in place
@@ -167,17 +180,17 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				prev_and_cur_action_spaces = sum(action_space[1:ii])
 
 				Q̂_u[prev_action_spaces+1:prev_and_cur_action_spaces] =
-					Qₛ[ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces+1, :]
+					Qₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, :]
 				Q̂_uu[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
-					Qₛₛ[ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces+1, ηₓ+ηₓₓ+1:end]
+					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, ηₓ+ηₓₓ+1:end]
 				Q̂_ub[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
-					Qₛₛ[ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces+1, 1:ηₓ+ηₓₓ]
+					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, 1:ηₓ+ηₓₓ]
 				
-				Q_bⁱ[ii] = Qₛ[1:ηₓ + ηₓₓ, :]
-				Q_bbⁱ[ii] = Qₛₛ[1:ηₓ + ηₓₓ, 1:ηₓ + ηₓₓ]
-				Q_uⁱ[ii] = Qₛ[ηₓ + ηₓₓ + 1:end, :]
-				Q_uuⁱ[ii] = Qₛₛ[ηₓ + ηₓₓ + 1:end, ηₓ + ηₓₓ + 1:end]
-				Q_ubⁱ[ii] = Qₛₛ[ηₓ + ηₓₓ + 1:end, 1:ηₓ + ηₓₓ]
+				Q_bⁱ[ii] = vec(Qₛⁱ[ii][1:ηₓ + ηₓₓ, :])
+				Q_bbⁱ[ii] = Qₛₛⁱ[ii][1:ηₓ + ηₓₓ, 1:ηₓ + ηₓₓ]
+				Q_uⁱ[ii] = vec(Qₛⁱ[ii][ηₓ + ηₓₓ + 1:end, :])
+				Q_uuⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, ηₓ + ηₓₓ + 1:end]
+				Q_ubⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, 1:ηₓ + ηₓₓ]
 			end
 
 			# Control regularization
@@ -200,27 +213,29 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 		# Forwards Pass
 
 		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time, final_planning_time; noise=true)
-		# println("solving .... new ū:")
-		# show(stdout, "text/plain", ū_new)
-		# println()
-		Q_new = cost(players, b̄_new, ū_new)
-		println("Q_new: ", Q_new, " Q_old: ", Q_old, "\n\t delta = ")
+		println("solving .... new ū:")
+		show(stdout, "text/plain", ū_new)
+		println()
 		
-		if Q_new <= Q_old
+		Q_new = cost(players, b̄_new, ū_new)
+		println("Q_new: ", Q_new, " Q_old: ", Q_old, "\n\t delta = ", Q_new - Q_old)
+		
+		if any([Q_new[ii] <= Q_old[ii] for ii in eachindex(players)])
+			println("decreasing regularization")
+			deltaQ = Q_new - Q_old
 			Q_old = Q_new
 			b̄ = b̄_new
 			ū = ū_new
-			μᵤ *= 0.5
-			μᵦ *= 0.5
+			μᵤ /= 1.0
+			μᵦ /= 1.0
 		else
-			# println("increasing regularization")
+			println("increasing regularization")
 			if μᵤ > 1e10 || μᵦ > 1e10
-				# println("μ too large")
 				error("did not converge...")
 				break
 			end
-			μᵤ *= 2
-			μᵦ *= 2
+			μᵤ *= 1.0
+			μᵦ *= 1.0
 		end
 	end
 	println("solver ran for ", iter, " iterations")
@@ -248,7 +263,7 @@ function simulate(env, players, ū, b̄, time, end_time; noise = false)
 	observation_noise = BlockVector(zeros(env.observation_noise_dim * length(players)), [env.observation_noise_dim for _ in 1:length(players)])
 
 	for tt in time:end_time-1
-		# println("simulating time: ", tt)
+		println("simulating time: ", tt)
 		if isa(ū, Function)
 			if isnothing(b̄) # first rollout does not have a nominal trajectory
 				ū_actual[tt-time+1] .= vcat([player.history[end][1] for player in players]...)
@@ -438,4 +453,33 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 	return β_new, Aₖ, Mₖ, Hₖ, Nₖ, Kₖ, x̂_temp, Σ_block
 end
 
+
+function get_plottables(b̄, ū)
+	player1_x1 = [b[Block(1)][1] for b in b̄]
+	player1_x2 = [b[Block(1)][2] for b in b̄]
+	player1_covs = [reshape(b[Block(1)][5:end], (4, 4)) for b in b̄]
+	player1_radii = [(cov[1, 1], cov[2, 2]) for cov in player1_covs]
+	player1_elipses = [getellipsepoints(player1_x1[i], player1_x2[i], player1_radii[i][1], player1_radii[i][2], 0.0) for i in eachindex(player1_x1)]
+
+	player2_x1 = [b[Block(2)][1] for b in b̄]
+	player2_x2 = [b[Block(2)][2] for b in b̄]
+	player2_covs = [reshape(b[Block(2)][5:end], (4, 4)) for b in b̄]
+	player2_radii = [(cov[1, 1], cov[2, 2]) for cov in player2_covs]
+	player2_elipses = [getellipsepoints(player2_x1[i], player2_x2[i], player2_radii[i][1], player2_radii[i][2], 0.0) for i in eachindex(player2_x1)]
+
+	return (; p1x = player1_x1, p1y = player1_x2, p1e = player1_elipses,
+		p2x = player2_x1, p2y = player2_x2, p2e = player2_elipses)
+end
+
+# Code from: https://discourse.julialang.org/t/plot-ellipse-in-makie/82814/2
+function getellipsepoints(cx, cy, rx, ry, θ)
+	t = range(0, 2*pi, length=100)
+	ellipse_x_r = @. rx * cos(t)
+	ellipse_y_r = @. ry * sin(t)
+	R = [cos(θ) sin(θ); -sin(θ) cos(θ)]
+	r_ellipse = [ellipse_x_r ellipse_y_r] * R
+	x = @. cx + r_ellipse[:,1]
+	y = @. cy + r_ellipse[:,2]
+	[Point2f(t) for t in zip(x, y)]
+end
 end

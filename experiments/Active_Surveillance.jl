@@ -131,9 +131,9 @@ end
 function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radius::Int = 10, 
 	L::Int = 1)
 	# Magic Numbers
-	p1_effort = 10.0
-	p1_end_cost_weight = 1.0
-	α₁ = .001
+	p1_effort = .001
+	p1_end_cost_weight = .0001
+	α₁ = 0.001
 	α₂ = 30.0
 	p2_effort = 1.0
 	vₖ_des = 10.0
@@ -172,7 +172,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 
 	function state_dynamics(states::BlockVector{T}, u::BlockVector, m::BlockVector;
 			τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 10.0, ϵₛ::Float64 = 1e-6,
-			 block=true) where T
+			block=true) where T
 		new_state = Union{BlockVector, Vector}
 		if block
 			new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])

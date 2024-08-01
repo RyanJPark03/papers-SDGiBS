@@ -24,7 +24,7 @@ mutable struct Player{}
 	# SDGiBS specific
 	predicted_belief::Vector{Any}
 	predicted_control::Vector{Any}
-	feedback_law::Any,
+	feedback_law::Any
 	solver_iter_work::Array{Any}
 end
 
@@ -171,7 +171,6 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 	# obs_noise = 
 	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 1.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
 	[env.observation_noise_dim for _ in 1:env.num_agents])
-	Main.@infiltrate 
 	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)
 
 	# Get updated beliefs

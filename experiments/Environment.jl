@@ -11,6 +11,7 @@ mutable struct base_environment{}
 	current_state
 	time::Int
 	final_time::Int
+	history::Array{Any}
 end
 
 
@@ -34,7 +35,8 @@ function init_base_environment(;
 		initial_state,
 		initial_state,
 		1,
-		final_time)
+		final_time,
+		[initial_state])
 end
 
 function unroll(env::base_environment, players;
@@ -62,6 +64,7 @@ function unroll(env::base_environment, players;
 	dn = (noise) ? n : zeros(env.dynamics_noise_dim*env.num_agents)
 	dyn_noise = BlockVector(dn, [env.dynamics_noise_dim for _ in 1:env.num_agents])
 	env.current_state = env.state_dynamics(env.current_state, actions, dyn_noise)
+	push!(env.history, env.current_state)
 
 	env.time += 1
 end
