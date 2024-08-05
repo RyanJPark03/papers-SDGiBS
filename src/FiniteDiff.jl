@@ -1,5 +1,5 @@
 export finite_diff
-function finite_diff(f, x; ϵ = 1e-8)
+function finite_diff(f, x; ϵ = 1e-9)
     num_dimensions = length(x)
     unperturbed_slice = f(x)
     slice_size = size(unperturbed_slice)
@@ -14,7 +14,7 @@ function finite_diff(f, x; ϵ = 1e-8)
         perturbation = ϵ * x[i] / n
         x_perturbed[i] += perturbation
         back_perturbed = f(x_perturbed)
-
+        # Main.@infiltrate (any((x) -> imag(x) != 0.0, back_perturbed))
         @assert !(any((x) -> imag(x) != 0.0, back_perturbed))
 
         x_perturbed[i] -= 2 * perturbation

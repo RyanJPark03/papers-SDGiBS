@@ -184,9 +184,6 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 
 				Q̂_u[prev_action_spaces+1:prev_and_cur_action_spaces] =
 					Qₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, :]
-				# Control regularization
-				Q̂_uu[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
-					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, ηₓ+ηₓₓ+1:end]
 				Q̂_ub[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
 					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, 1:ηₓ+ηₓₓ]
 				
@@ -195,6 +192,12 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				Q_uⁱ[ii] = vec(Qₛⁱ[ii][ηₓ + ηₓₓ + 1:end, :])
 				Q_uuⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, ηₓ + ηₓₓ + 1:end]
 				Q_ubⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, 1:ηₓ + ηₓₓ]
+
+
+				# Control regularization
+				Qₛₛⁱ[ii] += μᵤ[ii] * I
+				Q̂_uu[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
+					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, ηₓ+ηₓₓ+1:end]
 			end
 
 			# TODO: Control regularization
@@ -445,7 +448,7 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 	Nₖ = round.(h_jacobian[:, length(x̂ₖ)+1:end], digits = 100)
 
 	Γₖ₊₁ = Aₖ * Σₖ * Aₖ' + Mₖ * Mₖ'
-	Main.@infiltrate any(isnan.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ'))
+	# Main.@infiltrate any(isnan.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ'))
 	Kₖ = Γₖ₊₁ * Hₖ' * (round.(Hₖ * Γₖ₊₁ * Hₖ' + Nₖ * Nₖ', digits = 100) \ I)
 
 	noiseless_x̂ₖ₊₁ = env.state_dynamics(x̂ₖ, uₖ, m)

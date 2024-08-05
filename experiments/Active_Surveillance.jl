@@ -114,11 +114,11 @@ function run_active_surveillance_demo(time_steps, τ)
 	# Static image
 	bx = Axis(fig[1, 2], xlabel = "x", ylabel = "y")
 	scatterlines!(bx, coords1[1], coords1[2]; color = :blue)
-	scatterlines!(bx, belief_coords1[1], belief_coords1[2]; color = (:blue, 0.75), linestyle = :dash)
+	scatterlines!(bx, belief_coords1[1], belief_coords1[2]; color = (:green, 0.75), linestyle = :dash)
 	# scatter!(belief_coords1[1], belief_coords1[2]; color = :black, markersize = )
 	# scatterlines!(observations1[1], observations1[2]; color = (:blue, 0.5), linestyle = :dot)
 	scatterlines!(bx, coords2[1], coords2[2]; color = :red)
-	scatterlines!(bx, belief_coords2[1], belief_coords2[2]; color = (:red, 0.75), linestyle = :dash)
+	scatterlines!(bx, belief_coords2[1], belief_coords2[2]; color = (:yellow, 0.75), linestyle = :dash)
 	arc!(bx, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
 
 	#for sizing:
@@ -154,7 +154,21 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	initial_beliefs[Block(2)] .= vcat(copy(initial_state[Block(2)]), vec(copy(initial_cov_matrix)))
 
 
-	state_dynamics_noise_scaler = (u) ->  (norm(u)^2)^.25 .* I
+	function state_dynamics_noise_scaler(u)
+		# accel_noise = abs(u[1])
+		# steer_noise = 1e-5 * abs(u[2])
+		# noise = [
+		# 	accel_noise * max(1, steer_noise) 0 0 0;
+		# 	0 accel_noise * max(1, steer_noise) 0 0;
+		# 	0 0 steer_noise 0;
+		# 	0 0 0 accel_noise
+		# ]
+		# println("observation noise:")
+		# show(stdout, "text/plain", noise)
+		# println()
+		noise = norm(u[1])
+		return noise
+	end
 	function state_dynamics(states::Vector{T}, u, m;
 		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true) where T
 		new_state = Vector{T}(undef, length(states))
@@ -165,7 +179,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 			dv = ( (v * tan(steer)) / L )
 			ẋ = [v * cos(θ), v * sin(θ), dv, accel]
 
-			new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[i]) * m[4 * (i - 1) + 1 : 4 * i]
+			new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[2 * (i - 1) + 1 : 2 * i]) * m[4 * (i - 1) + 1 : 4 * i]
 		end
 		return new_state
 	end
@@ -200,7 +214,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	function measurement_noise_scaler1(state::Vector; surveillance_center = [0, 0], surveillance_radius::Int = 10)
 		# return I
 		# Only take x and y coords from state vector
-		n_outer = 100 * abs(norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)
+		n_outer = abs(norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)
 		# n_outer = max(0.01, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
 		# n_outer = min(100, n_outer) # make sure noise multiplier doesn't get too large
 		n = n_outer

@@ -103,7 +103,7 @@ end
 export get_action
 function get_action(players, ii, time; state=nothing)
 	# println("grabbing action, player: ", ii, " time: ", time)
-	Main.@infiltrate time == 30
+	# Main.@infiltrate time == 30
 	if isnothing(players[ii].feedback_law) || isnothing(state)
 		return players[ii].history[end][1]
 	else
@@ -172,7 +172,9 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 1.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
 	[env.observation_noise_dim for _ in 1:env.num_agents])
 	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)
-
+	println("actual observations: ", observations)
+	println("actual state: ", env.current_state)
+	println("diff: ", norm(observations - env.current_state))
 	# Get updated beliefs
 	old_beliefs = get_full_belief_state(players)
 	# new_beliefs = [SDGiBS.belief_update(env, players, observations)[Block(ii)] for ii in 1:env.num_agents]
