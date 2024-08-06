@@ -282,9 +282,7 @@ function plot_solutions(plottables)
 
 		player_1_point = [Point2f(time_slice.p1x[i], time_slice.p1y[i]) for i in eachindex(time_slice.p1x)]
 		player_2_point = [Point2f(time_slice.p2x[i], time_slice.p2y[i]) for i in eachindex(time_slice.p2x)]
-		player_1_cov = [time_slice.p1e[i] for i in eachindex(time_slice.p1e)]
-		player_2_cov = [time_slice.p2e[i] for i in eachindex(time_slice.p2e)]
-		return player_1_point, player_2_point, player_1_cov, player_2_cov
+		return player_1_point, player_2_point, time_slice.p1e[end], time_slice.p2e[end]
 	end
 
 	p1p = @lift $(player_locations)[1]
@@ -294,6 +292,8 @@ function plot_solutions(plottables)
 
 	scatterlines!(ax, p1p; color = :blue)
 	scatterlines!(ax, p2p; color = :red)
+	lines!(ax, p1e; color = :black)
+	lines!(ax, p2e; color = :black)
 	display(fig)
 	return fig
 end
