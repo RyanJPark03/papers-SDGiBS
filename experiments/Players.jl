@@ -25,7 +25,7 @@ mutable struct Player{}
 	predicted_belief::Vector{Any}
 	predicted_control::Vector{Any}
 	feedback_law::Any
-	solver_iter_work::Array{Any}
+	# solver_iter_work::Array{Any}
 end
 
 export init_player
@@ -71,7 +71,7 @@ function init_player(;
 	Player(player_type, player_id, copy(belief), cost, final_cost,
 		[[copy(default_action), nothing, copy(belief)]], belief_updater, action_selector,
 		action_space, observation_space, predicted_belief, predicted_control,
-		feedback_law, [])
+		feedback_law)
 end
 
 function handle_SDGiBS_action(players::Array{Player}, env::base_environment,
@@ -90,6 +90,15 @@ function handle_SDGiBS_action_coop(players::Array{Player}, env::base_environment
 		players[ii].feedback_law = [(δb) -> BlockVector(π[jj](δb), [player.action_space for player in players])[Block(ii)] for jj in eachindex(π)]
 	end
 end
+
+# function save_sim(players, b̄, ū, π, iter_info)
+# 	# iter_info = (iter_num, env.time)
+# 	for ii in eachindex(players)
+# 		push!(players[ii].solver_iter_work[env.time][1], b̄)
+# 		push!(players[ii].solver_iter_work[env.time][2], ū)
+# 		push!(players[ii].solver_iter_work[env.time][3], [(δb) -> BlockVector(π[jj](δb), [player.action_space for player in players])[Block(ii)] for jj in eachindex(π)])
+# 	end
+# end
 
 function get_nominal_belief(current_player, time)
 	return current_player.predicted_belief[time]

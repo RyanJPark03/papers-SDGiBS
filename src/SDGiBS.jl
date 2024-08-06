@@ -220,6 +220,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 		# Forwards Pass
 
 		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time, final_planning_time; noise=false)
+		push!(solver_iter_solutions, get_plottables(b̄_new, ū_new))
 		println("solving .... new ū:")
 		show(stdout, "text/plain", ū_new)
 		println()
@@ -249,7 +250,59 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 		end
 	end
 	println("solver ran for ", iter, " iterations")
+	plot_solutions(solver_iter_solutions)
+
 	return b̄, ū, π
+end
+
+function plot_solutions(plottables)
+	fig = Figure()
+	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
+	sg = SliderGrid(
+        fig[2, 1],
+        (label = "time", range = 1:length(plottables), format = x-> "", startvalue = 1)
+    )
+    solver_iteration = lift(sg.sliders[1].value) do a
+        Int(a)
+    end
+	player_locations = lift(solver_iteration) do a
+		# time_slices = [get_history(player, a) for player in demo.players]
+		time_slice = plottables[a]
+
+		player_1_point = [Point2f(time_slice.p1x[i], time_slice.p1y[i]) for i in eachindex(time_slice.p1x)]
+		player_2_point = [Point2f(time_slice.p2x[i], time_slice.p2y[i]) for i in eachindex(time_slice.p2x)]
+		player_1_cov = [time_slice.p1e[i] for i in eachindex(time_slice.p1e)]
+		player_2_cov = [time_slice.p2e[i] for i in eachindex(time_slice.p2e)]
+		return player_1_point, player_2_point, player_1_cov, player_2_cov
+	end
+
+	p1p = @lift $(player_locations)[1]
+	p2p = @lift $(player_locations)[2]
+	p1e = @lift $(player_locations)[3]
+	p2e = @lift $(player_locations)[4]
+
+	scatter!(ax, p1p; color = :blue)
+	scatter!(ax, p2p; color = :red)
+	# lines!(ax, p1e; color = (:blue, .75))
+	# lines!(ax, p2e; color = (:red, .75))
+	# arc!(ax, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
+
+
+	# # Static image
+	# bx = Axis(fig[1, 2], xlabel = "x", ylabel = "y")
+	# scatterlines!(bx, coords1[1], coords1[2]; color = :blue)
+	# scatterlines!(bx, belief_coords1[1], belief_coords1[2]; color = (:green, 0.75), linestyle = :dash)
+	# # scatter!(belief_coords1[1], belief_coords1[2]; color = :black, markersize = )
+	# # scatterlines!(observations1[1], observations1[2]; color = (:blue, 0.5), linestyle = :dot)
+	# scatterlines!(bx, coords2[1], coords2[2]; color = :red)
+	# scatterlines!(bx, belief_coords2[1], belief_coords2[2]; color = (:yellow, 0.75), linestyle = :dash)
+	# arc!(bx, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
+
+	#for sizing:
+	# scatter!(ax, belief_coords1[1][end], belief_coords1[2][end]; color = :black, markersize = 1)
+	# scatter!(ax, belief_coords2[1][end], belief_coords2[2][end]; color = :black, markersize = 1)
+	display(fig)
+	return fig
 end
 
 function create_policy(nominal_control, feed_forward, feed_backward)

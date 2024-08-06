@@ -7,25 +7,50 @@ function finite_diff(f, x; ϵ = 1e-9)
 
     n = norm(x)
 
+    # Active surveillance specific
+    state_dim = 4
     x_perturbed = copy(x)
     back_perturbed = copy(unperturbed_slice)
     forward_perturbed = copy(unperturbed_slice)
-    for i in 1 : num_dimensions
-        perturbation = ϵ * x[i] / n
-        x_perturbed[i] += perturbation
-        back_perturbed = f(x_perturbed)
-        # Main.@infiltrate (any((x) -> imag(x) != 0.0, back_perturbed))
-        @assert !(any((x) -> imag(x) != 0.0, back_perturbed))
+    for i in 1 : state_dim
+        for j in i : state_dim
+            idx = 4*(i - 1) + j
+            mirror_idx = 4*(j - 1) + i
+            
+            perturbation = ϵ * x[idx] / n
+            x_perturbed[idx] += perturbation
+            x_perturbed[mirror_idx] += perturbation
+            forward_perturbed = abs.(f(x_perturbed))
 
-        x_perturbed[i] -= 2 * perturbation
-        forward_perturbed = f(x_perturbed)
+            x_perturbed[idx] -= 2 * perturbation
+            x_perturbed[mirror_idx] -= 2 * perturbation
+            back_perturbed = abs.(f(x_perturbed))
 
-        @assert !(any((x) -> imag(x) != 0.0, forward_perturbed))
-
-        x_perturbed[i] += perturbation
-
-        grad[:, :, i] = (back_perturbed - forward_perturbed) / (2ϵ)
+            grad[:, :, idx] = (back_perturbed - forward_perturbed) / (4ϵ)
+            grad[:, :, mirror_idx] = (back_perturbed - forward_perturbed) / (4ϵ)
+        end
     end
+
+    # x_perturbed = copy(x)
+    # back_perturbed = copy(unperturbed_slice)
+    # forward_perturbed = copy(unperturbed_slice)
+    # for i in 1 : num_dimensions
+    #     perturbation = ϵ * x[i] / n
+    #     x_perturbed[i] += perturbation
+    #     back_perturbed = abs.(f(x_perturbed))
+    #     # Main.@infiltrate (any((x) -> imag(x) != 0.0, back_perturbed))
+
+    #     # @assert !(any((x) -> imag(x) != 0.0, back_perturbed))
+
+    #     x_perturbed[i] -= 2 * perturbation
+    #     forward_perturbed = abs.(f(x_perturbed))
+
+    #     # @assert !(any((x) -> imag(x) != 0.0, forward_perturbed))
+
+    #     x_perturbed[i] += perturbation
+
+    #     grad[:, :, i] = (back_perturbed - forward_perturbed) / (2ϵ)
+    # end
 
     return grad
 end

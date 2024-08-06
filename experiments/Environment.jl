@@ -40,7 +40,7 @@ function init_base_environment(;
 end
 
 function unroll(env::base_environment, players;
-    noise=true, noise_clip = false, noise_clip_val = .1)
+    noise=false, noise_clip = false, noise_clip_val = .1)
 	println("unrolling")
 	if 1 + env.time > env.final_time
 		println("Time steps exceed final time")
