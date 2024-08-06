@@ -105,7 +105,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 
 	# Find the actual planning horizon and final time 
 	#	(since horizon may extend past simulation's time interval)
-	final_planning_time = min(env.time + horizon, env.final_time)
+	final_planning_time = min(env.time + horizon - 1, env.final_time)
 	actual_horizon = final_planning_time - env.time
 
 	# Initialize covariance matrix
@@ -118,7 +118,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 
 	# Setup convenience functions to access player's predicted actions
 	total_feedback_law = (tt, belief_state) -> vcat([action_selector(players, ii, tt; state = belief_state) for ii in eachindex(players)]...)
-	u_k = (tt, belief_state) -> (tt == final_planning_time) ? BlockVector([0.0 for _ in 1:sum(action_length)], action_length) :
+	u_k = (tt, belief_state) -> (tt == actual_horizon) ? BlockVector([0.0 for _ in 1:ηᵤ], action_space) :
 		total_feedback_law(tt, belief_state) 
 
 	# Initial nominal trajectory
@@ -136,16 +136,18 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	deltaQ = Q_new - Q_old
 	cost_vars = DiffResults.HessianResult(x_u)
 	iter = 0
+	set_new_iter = false
 
 	# initialize final answer
-	π::Array{Function} = [() -> zero(ηᵤ) for _ in 1:actual_horizon]
+	π::Array{Function} = [(belief_state) -> u_k(env.time + tt - 1, ηᵤ) for tt in 1:actual_horizon]
 
 	# Functions to grab matrix form of belief update
 	#	bₖ₊₁ ≈ gₖ + Wₖ * Εₖ, where Εₖ ~ N(0, I)
 	W = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players)[1]
 	g = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players, calc_W = false)[2]
 
-	while norm(deltaQ, 2) > ϵ && iter < 100
+	while norm(deltaQ, 2) > ϵ && iter < 20
+		set_new_iter = false
 		# Backward Pass
 		println("iter: ", iter)
 		iter += 1
@@ -162,7 +164,11 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 
 			# Construct concatenated state-action vector
 			# Main.@infiltrate
-			x_u .= vcat(b̄[tt_idx][1:end], u_k(tt_idx, b̄[tt_idx])[1:end])
+			println("attempting to retrieve action at time: ", tt)
+			println("\tgrabbing action at π[", tt_idx, "], u_k input is: ", env.time + tt_idx - 1)
+			println("\tlength of π: ", length(π), " range from: ", [env.time + i - 1 for i in 1:actual_horizon])
+			println("action: ", π[tt_idx](b̄[tt_idx])[1:end])
+			x_u .= vcat(b̄[tt_idx][1:end], π[tt_idx](b̄[tt_idx])[1:end])
 
 			# Calculate Wₖ and gₖ # TODO: in place
 			Wₖ = W(x_u)
@@ -199,14 +205,11 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				Q̂_uu[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
 					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, ηₓ+ηₓₓ+1:end]
 			end
-
-			# TODO: Control regularization
-			# Q̂_uu += μᵤ * I
 			jₖ .= -Q̂_uu \ Q̂_u
-			# TODO: Check if below is true
-			# Kₖ is non zero in second players spot
-			# in fact Q_uu and Q_ub? is the same as player 1...
 			Kₖ .= -Q̂_uu \ Q̂_ub # overloaded notation, Kₖ has a different value in belief update
+			# println("Kₖ: ")
+			# show(stdout, "text/plain", Kₖ)
+			# println()
 			π[tt_idx] = create_policy(ū[tt_idx], jₖ, Kₖ)
 
 			# Backwards iteration of value function
@@ -236,20 +239,28 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				μᵦ[ii] *= 1.5
 			else
 				println("decreasing regularization for player ", ii)
-				deltaQ = Q_new - Q_old
-				Q_old = Q_new
-				b̄ = b̄_new
-				ū = ū_new
+				if !set_new_iter# Don't want other players to change iteration variables if previous players have already done so
+					set_new_iter = true
+					println("setting new")
+					deltaQ = Q_new - Q_old
+					Q_old = Q_new
+					b̄ = b̄_new
+					ū = ū_new
+				end
 				μᵤ[ii] /= 1.5
 				μᵦ[ii] /= 1.5
+				
 			end
 		end
-		if any([μᵤ[ii] > 1e10 || μᵦ[ii] > 1e10 || μᵤ[ii] < 1e-10 || μᵦ[ii] < 1e-10 for ii in eachindex(players)]) 
+		if any([μᵤ[ii] > 1e10 || μᵦ[ii] > 1e10 || μᵤ[ii] < 1e-10 || μᵦ[ii] < 1e-10 for ii in eachindex(players)])
+			plot_solutions(solver_iter_solutions)
 			error("did not converge...")
 			break
 		end
 	end
 	println("solver ran for ", iter, " iterations")
+	println("\tdeltaQ: ", deltaQ,"\n\tQ_new: ", Q_new, "\n\tQ_old: ", Q_old)
+	println("\tdeltaQ norm: ", norm(deltaQ, 2), ", ϵ = ", ϵ, ", iter: ", iter)
 	plot_solutions(solver_iter_solutions)
 
 	return b̄, ū, π
@@ -281,26 +292,8 @@ function plot_solutions(plottables)
 	p1e = @lift $(player_locations)[3]
 	p2e = @lift $(player_locations)[4]
 
-	scatter!(ax, p1p; color = :blue)
-	scatter!(ax, p2p; color = :red)
-	# lines!(ax, p1e; color = (:blue, .75))
-	# lines!(ax, p2e; color = (:red, .75))
-	# arc!(ax, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
-
-
-	# # Static image
-	# bx = Axis(fig[1, 2], xlabel = "x", ylabel = "y")
-	# scatterlines!(bx, coords1[1], coords1[2]; color = :blue)
-	# scatterlines!(bx, belief_coords1[1], belief_coords1[2]; color = (:green, 0.75), linestyle = :dash)
-	# # scatter!(belief_coords1[1], belief_coords1[2]; color = :black, markersize = )
-	# # scatterlines!(observations1[1], observations1[2]; color = (:blue, 0.5), linestyle = :dot)
-	# scatterlines!(bx, coords2[1], coords2[2]; color = :red)
-	# scatterlines!(bx, belief_coords2[1], belief_coords2[2]; color = (:yellow, 0.75), linestyle = :dash)
-	# arc!(bx, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
-
-	#for sizing:
-	# scatter!(ax, belief_coords1[1][end], belief_coords1[2][end]; color = :black, markersize = 1)
-	# scatter!(ax, belief_coords2[1][end], belief_coords2[2][end]; color = :black, markersize = 1)
+	scatterlines!(ax, p1p; color = :blue)
+	scatterlines!(ax, p2p; color = :red)
 	display(fig)
 	return fig
 end
@@ -363,18 +356,11 @@ function cost(players, b, u)
 	Q = [0.0 for _ in eachindex(players)]
 
 	for ii in eachindex(players)
-		for tt in 1:length(blocks(b))-1
-			if typeof(u) == Vector
-				actions = u[tt][Block(ii)]
-			else
-				actions = BlockVector(vcat([u[Block(ii, tt)] for ii in eachindex(players)]...),
-					[player.action_space for player in players])
-			end
-			Q[ii] += cₖ[ii](b[tt], actions)
+		for tt in 1:length(b)-1
+			Q[ii] += cₖ[ii](b[tt], u[tt])
 		end
 		Q[ii] += cₗ[ii](b[end])
 	end
-
 	return Q
 end
 
