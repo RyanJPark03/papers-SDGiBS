@@ -97,7 +97,7 @@ function get_nominal_belief(current_player, time)
 end
 
 function get_δb(current_player, time, state)
-	# println("player: ", current_player.player_id, " time: ", time, " norm δb: ", norm(state - get_nominal_belief(current_player, time)))
+	println("player: ", current_player.player_id, " time: ", time, " norm δb: ", norm(state - get_nominal_belief(current_player, time)))
 	return state - get_nominal_belief(current_player, time)
 end
 
@@ -117,7 +117,7 @@ function get_action(players, ii, steps_ahead; state=nothing)
 	if isnothing(players[ii].feedback_law) || isnothing(state)
 		return players[ii].history[end][1]
 	else
-		return players[ii].feedback_law[steps_ahead](get_δb(players[ii], time, state))
+		return players[ii].feedback_law[steps_ahead](get_δb(players[ii], steps_ahead, state))
 	end
 end
 

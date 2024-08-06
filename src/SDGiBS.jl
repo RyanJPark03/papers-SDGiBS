@@ -139,14 +139,16 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	set_new_iter = false
 
 	# initialize final answer
-	π::Array{Function} = [(belief_state) -> u_k(env.time + tt - 1, ηᵤ) for tt in 1:actual_horizon]
+	π::Array{Function} = [(belief_state) -> u_k(env.time + tt - 1, belief_state) for tt in 1:actual_horizon]
+	println("asdfasdfasdf")
+	println([env.time + tt - 1 for tt in 1:actual_horizon])
 
 	# Functions to grab matrix form of belief update
 	#	bₖ₊₁ ≈ gₖ + Wₖ * Εₖ, where Εₖ ~ N(0, I)
 	W = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players)[1]
 	g = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players, calc_W = false)[2]
 
-	while norm(deltaQ, 2) > ϵ && iter < 20
+	while norm(deltaQ, 2) > ϵ
 		set_new_iter = false
 		# Backward Pass
 		println("iter: ", iter)
@@ -155,19 +157,19 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 		# Value function termination conditions
 		V .= map((cᵢ) -> cᵢ(b̄[end]), c)
 		V_b .= map((cᵢ) -> ForwardDiff.gradient(cᵢ, b̄[end]), c)
-		# TODO: check if below is still true 
-		# the second player section is the same for v_bb[1] and v_bb[2]...
 		V_bb .= map((cᵢ) -> ForwardDiff.hessian(cᵢ, b̄[end][1:end]), c)
+		# println("V_bb")
+		# for i in eachindex(V_bb)
+		# 	show(stdout, "text/plain", V_bb[i])
+		# 	println()
+		# end
+		# println()
 
 		for tt in final_planning_time-1:-1:env.time
 			tt_idx = tt - env.time + 1
 
 			# Construct concatenated state-action vector
-			# Main.@infiltrate
-			println("attempting to retrieve action at time: ", tt)
-			println("\tgrabbing action at π[", tt_idx, "], u_k input is: ", env.time + tt_idx - 1)
-			println("\tlength of π: ", length(π), " range from: ", [env.time + i - 1 for i in 1:actual_horizon])
-			println("action: ", π[tt_idx](b̄[tt_idx])[1:end])
+			println("planning at tt: ", tt, "converted into tt_idx: ", tt_idx)
 			x_u .= vcat(b̄[tt_idx][1:end], π[tt_idx](b̄[tt_idx])[1:end])
 
 			# Calculate Wₖ and gₖ # TODO: in place
@@ -196,17 +198,29 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				Q_bⁱ[ii] = vec(Qₛⁱ[ii][1:ηₓ + ηₓₓ, :])
 				Q_bbⁱ[ii] = Qₛₛⁱ[ii][1:ηₓ + ηₓₓ, 1:ηₓ + ηₓₓ]
 				Q_uⁱ[ii] = vec(Qₛⁱ[ii][ηₓ + ηₓₓ + 1:end, :])
-				Q_uuⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, ηₓ + ηₓₓ + 1:end]
+				
 				Q_ubⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, 1:ηₓ + ηₓₓ]
-
 
 				# Control regularization
 				Qₛₛⁱ[ii] += μᵤ[ii] * I
+				Q_uuⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, ηₓ + ηₓₓ + 1:end]
+				println("after player ", ii, "'s backpass at time: ", tt)
 				Q̂_uu[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
 					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, ηₓ+ηₓₓ+1:end]
+				show(stdout, "text/plain", Q̂_uu)
+				println()
+				println("Qub:")
+				show(stdout, "text/plain", Q̂_ub)
+				println()
+				println("Qu")
+				show(stdout, "text/plain", Q̂_u)
+				println()
 			end
-			jₖ .= -Q̂_uu \ Q̂_u
-			Kₖ .= -Q̂_uu \ Q̂_ub # overloaded notation, Kₖ has a different value in belief update
+			pseudo_inverse = pinv(Q̂_uu)
+			jₖ .= - pseudo_inverse * Q̂_u
+			Kₖ .= - pseudo_inverse * Q̂_ub # overloaded notation, Kₖ has a different value in belief update
+			# jₖ .= - Q̂_uu \ Q̂_u
+			# Kₖ .= - Q̂_uu \ Q̂_ub # overloaded notation, Kₖ has a different value in belief update
 			# println("Kₖ: ")
 			# show(stdout, "text/plain", Kₖ)
 			# println()
@@ -271,7 +285,7 @@ function plot_solutions(plottables)
 	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
 	sg = SliderGrid(
         fig[2, 1],
-        (label = "time", range = 1:length(plottables), format = x-> "", startvalue = 1)
+        (label = "solver iteration", range = 1:length(plottables), format = x-> "", startvalue = 1)
     )
     solver_iteration = lift(sg.sliders[1].value) do a
         Int(a)
@@ -292,9 +306,15 @@ function plot_solutions(plottables)
 
 	scatterlines!(ax, p1p; color = :blue)
 	scatterlines!(ax, p2p; color = :red)
-	lines!(ax, p1e; color = :black)
-	lines!(ax, p2e; color = :black)
+	lines!(ax, p1e; color = (:blue, 0.75))
+	lines!(ax, p2e; color = (:red, 0.75))
 	display(fig)
+
+	surveillance_center = [5, 5]
+	surveillance_radius = 10
+
+	arc!(ax, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
+
 	return fig
 end
 
@@ -327,8 +347,10 @@ function simulate(env, players, ū, b̄, time, end_time; noise = false)
 				ū_actual[tt-time+1] .= ū(tt, δb = b̄_new[tt-time+1] - b̄[tt-time+1])
 			end
 		elseif typeof(ū) == Vector{Function}
-			println("\tb's: ", b̄_new[tt-time+1], " - ", b̄[tt-time+1])
-			println("\tδb = ", b̄_new[tt-time+1] - b̄[tt-time+1])
+			println("\tb's: ", b̄_new[tt-time+1][1:20], "\n\t",  b̄_new[tt-time+1][21:end],"\n\t", b̄[tt-time+1][1:20], "\n\t", b̄[tt-time+1][21:end])
+			δb = b̄_new[tt-time+1] - b̄[tt-time+1]
+			println("\tδb = ", δb[1:20])
+			println("\t", δb[21:end])
 			ū_actual[tt-time+1] .= ū[tt-time+1](b̄_new[tt-time+1] - b̄[tt-time+1])
 		end
 		println("\tu_acutal: ", ū_actual[tt-time+1])

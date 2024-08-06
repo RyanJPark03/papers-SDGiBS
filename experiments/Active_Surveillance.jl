@@ -26,7 +26,7 @@ end
 function active_surveillance_demo_main()
 	open("./out.temp", "w") do file
 		redirect_stdout(file) do 
-			run_active_surveillance_demo(30, .3)
+			run_active_surveillance_demo(30, .1)
 		end
 	end
 end
@@ -131,10 +131,10 @@ end
 function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radius::Int = 10, 
 	L::Int = 1)
 	# Magic Numbers
-	p1_effort = .1
-	p1_end_cost_weight = 1.0
-	α₁ = 0.001
-	α₂ = 30.0
+	p1_effort = .001
+	p1_end_cost_weight = .1
+	α₁ = .001
+	α₂ = 3.000
 	p2_effort = 1.0
 	vₖ_des = 10.0
 	collision_exponent_multiplier = 0.2
@@ -154,7 +154,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	initial_beliefs[Block(2)] .= vcat(copy(initial_state[Block(2)]), vec(copy(initial_cov_matrix)))
 
 
-	function state_dynamics_noise_scaler(u)
+	function state_dynamics_noise_scaler(u) # TODO: make it work
 		# accel_noise = abs(u[1])
 		# steer_noise = 1e-5 * abs(u[2])
 		# noise = [
