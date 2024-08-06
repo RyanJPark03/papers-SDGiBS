@@ -12,22 +12,50 @@ function finite_diff(f, x; ϵ = 1e-9)
     x_perturbed = copy(x)
     back_perturbed = copy(unperturbed_slice)
     forward_perturbed = copy(unperturbed_slice)
-    for i in 1 : state_dim
-        for j in i : state_dim
-            idx = 4*(i - 1) + j
-            mirror_idx = 4*(j - 1) + i
-            
+    for player in 1:2
+        # Do the belief mean perturbations
+        for i in 1:state_dim
+            idx = (20 * (player - 1)) + i
             perturbation = ϵ * x[idx] / n
             x_perturbed[idx] += perturbation
-            x_perturbed[mirror_idx] += perturbation
             forward_perturbed = abs.(f(x_perturbed))
 
             x_perturbed[idx] -= 2 * perturbation
-            x_perturbed[mirror_idx] -= 2 * perturbation
             back_perturbed = abs.(f(x_perturbed))
 
-            grad[:, :, idx] = (back_perturbed - forward_perturbed) / (4ϵ)
-            grad[:, :, mirror_idx] = (back_perturbed - forward_perturbed) / (4ϵ)
+            grad[:, :, idx] = (back_perturbed - forward_perturbed) / (2ϵ)
+        end
+
+        # Do the symmetric perturbations
+        for i in 1 : state_dim
+            for j in i : state_dim
+                idx = (20 * (player - 1)) + 4 + 4 * (i - 1) + j
+                mirror_idx = (20 * (player - 1)) + 4 +  4 * (j - 1) + i
+                
+                perturbation = ϵ * x[idx] / n
+                x_perturbed[idx] += perturbation
+                x_perturbed[mirror_idx] += perturbation
+                forward_perturbed = abs.(f(x_perturbed))
+                
+                x_perturbed[idx] -= 2 * perturbation
+                x_perturbed[mirror_idx] -= 2 * perturbation
+                back_perturbed = abs.(f(x_perturbed))
+
+                grad[:, :, idx] = (back_perturbed - forward_perturbed) / (4ϵ)
+                grad[:, :, mirror_idx] = (back_perturbed - forward_perturbed) / (4ϵ)
+            end
+        end
+
+        for i in 1 : 2 # 2 = action dimension
+            idx = 40 + (2 * (player - 1)) + i
+            perturbation = ϵ * x[idx] / n
+            x_perturbed[idx] += perturbation
+            forward_perturbed = abs.(f(x_perturbed))
+
+            x_perturbed[idx] -= 2 * perturbation
+            back_perturbed = abs.(f(x_perturbed))
+
+            grad[:, :, idx] = (back_perturbed - forward_perturbed) / (2ϵ)
         end
     end
 
