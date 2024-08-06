@@ -91,14 +91,6 @@ function handle_SDGiBS_action_coop(players::Array{Player}, env::base_environment
 	end
 end
 
-# function save_sim(players, b̄, ū, π, iter_info)
-# 	# iter_info = (iter_num, env.time)
-# 	for ii in eachindex(players)
-# 		push!(players[ii].solver_iter_work[env.time][1], b̄)
-# 		push!(players[ii].solver_iter_work[env.time][2], ū)
-# 		push!(players[ii].solver_iter_work[env.time][3], [(δb) -> BlockVector(π[jj](δb), [player.action_space for player in players])[Block(ii)] for jj in eachindex(π)])
-# 	end
-# end
 
 function get_nominal_belief(current_player, time)
 	return current_player.predicted_belief[time]
@@ -109,14 +101,23 @@ function get_δb(current_player, time, state)
 	return state - get_nominal_belief(current_player, time)
 end
 
+"""
+gets a predicted action for a player, given the current state
+
+params: players - array of players
+		ii - index of the player
+		steps_ahead - how many steps ahead to look
+			This one is a little confusing, but a player's predicted control starts at the current time step, so steps_ahead = 1 returns the predicted control
+			at the current time step. steps_ahead = 2 returns the predicted control at the next time step, etc...
+		state - the current state of the world
+"""
+
 export get_action
-function get_action(players, ii, time; state=nothing)
-	# println("grabbing action, player: ", ii, " time: ", time)
-	# Main.@infiltrate time == 30
+function get_action(players, ii, steps_ahead; state=nothing)
 	if isnothing(players[ii].feedback_law) || isnothing(state)
 		return players[ii].history[end][1]
 	else
-		return players[ii].feedback_law[time](get_δb(players[ii], time, state))
+		return players[ii].feedback_law[steps_ahead](get_δb(players[ii], time, state))
 	end
 end
 
