@@ -166,7 +166,6 @@ end
 
 export time_step_all_coop
 function time_step_all_coop(players::Array{Player}, env::base_environment)
-	# println("time step: ", env.time, " / ", env.final_time)
 	# Act, Obs, Upd
 
 	# Act
@@ -177,11 +176,8 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 		[player.action_space for player in players])
 	
 	# Iterate environment
-	unroll(env, players; noise = false, noise_clip = false, noise_clip_val = 0.1)
+	unroll(env, players; noise = false, noise_clip = false, noise_clip_val = 0.1, store_solver_history = true)
 
-	# Do observations
-	# motion_noise = 1.0
-	# obs_noise = 
 	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 1.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
 	[env.observation_noise_dim for _ in 1:env.num_agents])
 	observations = env.observation_function(; states = BlockVector(env.current_state, [4, 4]), m = m)

@@ -31,7 +31,7 @@ function active_surveillance_demo_main()
 	end
 end
 
-function run_active_surveillance_demo(time_steps, τ)
+function run_active_surveillance_demo(time_steps, τ; verbose = false)
 	surveillance_center = [5, 5]
 	surveillance_radius = 10
 	
@@ -56,39 +56,56 @@ function run_active_surveillance_demo(time_steps, τ)
 
 	costs = []
 	for tt in 1 : demo.env.final_time
-		println("calculating cost for time: ", tt)
+		
 		time_slices = [get_history(player, tt) for player in demo.players]
 
 		beliefs = vcat([time_slice[3] for time_slice in time_slices]...)
 		action = vcat([isnothing(time_slices[ii][1]) ? zeros(demo.players[ii].action_space) : time_slices[ii][1] for ii in eachindex(time_slices)]...)
 
-
 		p2_cov = reshape(beliefs[Int(length(beliefs)//2 + 5):end], (4, 4))
-		println("p2 cov: ")
-		show(stdout, "text/plain", p2_cov)
-		println()
-
 		p1_costs = (;time_dependent_cost = demo.players[1].cost(beliefs, action), final_cost = demo.players[1].final_cost(beliefs))
 		p2_costs = (;time_dependent_cost = demo.players[2].cost(beliefs, action), final_cost = demo.players[2].final_cost(beliefs))
+
+		if verbose
+			println("calculating cost for time: ", tt)
+			println("p2 cov: ")
+			show(stdout, "text/plain", p2_cov)
+			println()
+		end
+
 		push!(costs, (p1_costs, p2_costs))
 	end
-	show(stdout, "text/plain", costs)
+	verbose || show(stdout, "text/plain", costs)
 
 
 	fig = Figure()
-	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
+	single_time_graph = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
+	full_trajectory_graph = Axis(fig[1, 2], xlabel = "x", ylabel = "y")
+
+
+	input_solver_iter_upper_limit = 1024
 	sg = SliderGrid(
         fig[2, 1],
-        (label = "time", range = 1:demo.env.final_time, format = x-> "", startvalue = 1)
+        (label = "time", range = 1:demo.env.final_time, format = x-> "", startvalue = 1),
+		(label = "solver iteration", range = 1:input_solver_iter_upper_limit, format = x-> "", startvalue = 1)
     )
-    observable_time = lift(sg.sliders[1].value) do a
-        Int(a)
-    end
-	player_locations = lift(observable_time) do a
-		time_slices = [get_history(player, a) for player in demo.players]
-		# action = [slice[2] for slice in time_slices]
-		# println("p2 actions: ")
-		# display(action[2])
+	sg_values = [s.value for s in sg.sliders]
+	observable_sliders = lift(sg_values...) do input_time, input_solver_iter
+		time = Int(input_time)
+
+		actual_num_iterations = length(demo.env.solver_history[Int(input_time)])
+		solver_iter_num = round(Int, (input_solver_iter / input_solver_iter_upper_limit) * actual_num_iterations)
+		solver_iter_num = max(1, solver_iter_num)
+		solver_iter_num = min(actual_num_iterations, solver_iter_num)
+		return [time, solver_iter_num]
+	end
+	player_locations = lift(observable_sliders) do slider_values
+		time_slices = [get_history(player, slider_values[1]) for player in demo.players]
+		if verbose
+			action = [slice[2] for slice in time_slices]
+			println("actions: ")
+			show(stdout, "text/plain", action)
+		end
 		beliefs = [time_slice[3] for time_slice in time_slices]
 
 		positions = [belief[1:2] for belief in beliefs]
@@ -104,27 +121,44 @@ function run_active_surveillance_demo(time_steps, τ)
 					$(player_locations)[2][1][1], $(player_locations)[2][1][2], 0)
 	player_2_cov = @lift getellipsepoints($(player_locations)[1][2][1], $(player_locations)[1][2][2],
 					$(player_locations)[2][2][1], $(player_locations)[2][2][2], 0)
-	scatter!(ax, player_1_point; color = :blue)
-	scatter!(ax, player_2_point; color = :red)
-	lines!(ax, player_1_cov; color = (:blue, .75))
-	lines!(ax, player_2_cov; color = (:red, .75))
-	arc!(ax, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
 
+	scatter!(single_time_graph, player_1_point; color = :blue)
+	scatter!(single_time_graph, player_2_point; color = :red)
+	lines!(single_time_graph, player_1_cov; color = (:blue, .75))
+	lines!(single_time_graph, player_2_cov; color = (:red, .75))
+	arc!(single_time_graph, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
+	#for sizing:
+	# scatter!(single_time_graph, belief_coords1[1][end], belief_coords1[2][end]; color = :black, markersize = 1)
+	# scatter!(single_time_graph, belief_coords2[1][end], belief_coords2[2][end]; color = :black, markersize = 1)
+
+	solver_iteration_trajectory = lift(observable_sliders) do slider_values
+		time = slider_values[1]
+		solver_iter = slider_values[2]
+		time_slice = demo.env.solver_history[time][solver_iter]
+
+		player_1_point = [Point2f(time_slice.p1x[i], time_slice.p1y[i]) for i in eachindex(time_slice.p1x)]
+		player_2_point = [Point2f(time_slice.p2x[i], time_slice.p2y[i]) for i in eachindex(time_slice.p2x)]
+		return player_1_point, player_2_point, time_slice.p1e[end], time_slice.p2e[end]
+	end
+
+	p1p = @lift $(solver_iteration_trajectory)[1]
+	p2p = @lift $(solver_iteration_trajectory)[2]
+	p1e = @lift $(solver_iteration_trajectory)[3]
+	p2e = @lift $(solver_iteration_trajectory)[4]
+
+	scatterlines!(single_time_graph, p1p; color = (:blue, 0.25))
+	scatterlines!(single_time_graph, p2p; color = (:red, 0.25))
+	lines!(single_time_graph, p1e; color = (:blue, 0.25))
+	lines!(single_time_graph, p2e; color = (:red, 0.25))
 
 	# Static image
-	bx = Axis(fig[1, 2], xlabel = "x", ylabel = "y")
-	scatterlines!(bx, coords1[1], coords1[2]; color = :blue)
-	scatterlines!(bx, belief_coords1[1], belief_coords1[2]; color = (:green, 0.75), linestyle = :dash)
-	# scatter!(belief_coords1[1], belief_coords1[2]; color = :black, markersize = )
-	# scatterlines!(observations1[1], observations1[2]; color = (:blue, 0.5), linestyle = :dot)
-	scatterlines!(bx, coords2[1], coords2[2]; color = :red)
-	scatterlines!(bx, belief_coords2[1], belief_coords2[2]; color = (:yellow, 0.75), linestyle = :dash)
-	arc!(bx, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
+	scatterlines!(full_trajectory_graph, coords1[1], coords1[2]; color = :blue)
+	scatterlines!(full_trajectory_graph, belief_coords1[1], belief_coords1[2]; color = (:green, 0.75), linestyle = :dash)
+	scatterlines!(full_trajectory_graph, coords2[1], coords2[2]; color = :red)
+	scatterlines!(full_trajectory_graph, belief_coords2[1], belief_coords2[2]; color = (:yellow, 0.75), linestyle = :dash)
+	arc!(full_trajectory_graph, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
 
-	#for sizing:
-	scatter!(ax, belief_coords1[1][end], belief_coords1[2][end]; color = :black, markersize = 1)
-	scatter!(ax, belief_coords2[1][end], belief_coords2[2][end]; color = :black, markersize = 1)
-	# display(fig, fullsreen = true)
+	display(fig)
 	return fig
 end
 
@@ -166,7 +200,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		# println("observation noise:")
 		# show(stdout, "text/plain", noise)
 		# println()
-		noise = norm(u[1])
+		noise = norm(u)
 		return noise
 	end
 	function state_dynamics(states::Vector{T}, u, m;
@@ -214,10 +248,9 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	function measurement_noise_scaler1(state::Vector; surveillance_center = [0, 0], surveillance_radius::Int = 10)
 		# return I
 		# Only take x and y coords from state vector
-		n_outer = abs(norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)
-		# n_outer = max(0.01, n_outer) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
-		# n_outer = min(100, n_outer) # make sure noise multiplier doesn't get too large
-		n = n_outer
+		n = abs(norm(state[1:2] - surveillance_center, 2) - surveillance_radius^2)
+		# n = max(0.01, n) # make sure noise multiplier doesn't get too small, don't want players to be able to see each other perfectly
+		# n = min(100, n) # make sure noise multiplier doesn't get too large
 
         v = abs(1e-3 * state[4]) # velocity scaled noise
 		t = abs(1e-3 * state[3])
@@ -297,11 +330,9 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	end
 
 	function overlap(ellipse1, ellipse2)
-		# Gilitschenski, Igor, and Uwe D. Hanebeck. "A robust computational test for overlap of two arbitrary-dimensional
-		# ellipsoids in fault-detection of kalman filters." 2012 15th International Conference on Information Fusion. IEEE, 2012.
+		
 		c = ellipse1[1]
 		d = ellipse2[1]
-		# Main.@infiltrate
 		A = ellipse1[2]
 		B = ellipse2[2]
 
@@ -312,8 +343,8 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		min_safety_distance = radius_estimate1 + radius_estimate2
 
 		return expected_distance < min_safety_distance
-
-
+		# Gilitschenski, Igor, and Uwe D. Hanebeck. "A robust computational test for overlap of two arbitrary-dimensional
+		# ellipsoids in fault-detection of kalman filters." 2012 15th International Conference on Information Fusion. IEEE, 2012.
 		# model = JuMP.Model()
 		# JuMP.set_optimizer(model, OSQP.Optimizer)
 		# JuMP.set_silent(model)
@@ -324,13 +355,11 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		# 	model,
 		# 	Min,
 		# 	J[1]
-    	# )
-		
+		# )
 		# # @constraint(model, s >= ϵ, s <= 1-ϵ)
 		# JuMP.optimize!(model)
 		# (JuMP.termination_status(model) == JuMP.MOI.OPTIMAL) ||
         # 	error("OSQP did not find an optimal solution to this trajectory generation problem.")
-
 		#  return JuMP.value(s) < 0
 	end
 
@@ -358,7 +387,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 			observation_function = observation_function,
 			num_agents = 2,
 			state_dim = 4,
-		    dynamics_noise_dim = 4,
+			dynamics_noise_dim = 4,
 			observation_noise_dim = 4,
 			initial_state = initial_state,
 			final_time = time_steps)
@@ -387,7 +416,6 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 			time = env.final_time,
 			num_players = 2)
 		]
-
 	return surveillance_demo(env, players)
 end
 
