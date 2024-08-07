@@ -18,10 +18,23 @@ function finite_diff(f, x; ϵ = 1e-9)
             idx = (20 * (player - 1)) + i
             perturbation = ϵ * x[idx] / n
             x_perturbed[idx] += perturbation
-            forward_perturbed = abs.(f(x_perturbed))
+            forward_perturbed = f(x_perturbed)
+            if any((x) -> imag(x) != 0.0, forward_perturbed)
+                @warn "Imaginary values found in Wₖ forward_perturb"
+                println("Wₖ forward_perturb")
+                show(stdio, "text/plain", forward_perturbed)
+                forward_perturbed = abs.(forward_perturbed)
+            end
 
             x_perturbed[idx] -= 2 * perturbation
-            back_perturbed = abs.(f(x_perturbed))
+            back_perturbed = f(x_perturbed)
+            if any((x) -> imag(x) != 0.0, back_perturbed)
+                @warn "Imaginary values found in Wₖ back_perturb"
+                println("Wₖ back_perturb")
+                show(stdio, "text/plain", back_perturbed)
+                back_perturbed = abs.(back_perturbed)
+            end
+
 
             grad[:, :, idx] = (back_perturbed - forward_perturbed) / (2ϵ)
         end
