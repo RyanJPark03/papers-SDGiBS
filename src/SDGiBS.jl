@@ -118,7 +118,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 
 	# Setup convenience functions to access player's predicted actions
 	total_feedback_law = (tt, belief_state) -> vcat([action_selector(players, ii, tt; state = belief_state) for ii in eachindex(players)]...)
-	u_k = (tt, belief_state) -> (tt == actual_horizon) ? BlockVector([0.0 for _ in 1:ηᵤ], action_space) :
+	u_k = (tt, belief_state) -> (tt == horizon) ? BlockVector([0.0 for _ in 1:ηᵤ], action_space) :
 		total_feedback_law(tt, belief_state) 
 
 	# Initial nominal trajectory
@@ -139,9 +139,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	set_new_iter = false
 
 	# initialize final answer
-	π::Array{Function} = [(belief_state) -> u_k(env.time + tt - 1, belief_state) for tt in 1:actual_horizon]
-	println("asdfasdfasdf")
-	println([env.time + tt - 1 for tt in 1:actual_horizon])
+	π::Array{Function} = [(belief_state) -> u_k(tt, belief_state) for tt in 1:actual_horizon]
 
 	# Functions to grab matrix form of belief update
 	#	bₖ₊₁ ≈ gₖ + Wₖ * Εₖ, where Εₖ ~ N(0, I)

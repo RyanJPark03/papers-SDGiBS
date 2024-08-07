@@ -114,7 +114,7 @@ params: players - array of players
 
 export get_action
 function get_action(players, ii, steps_ahead; state=nothing)
-	if isnothing(players[ii].feedback_law) || isnothing(state)
+	if isnothing(players[ii].feedback_law) || isnothing(state) || steps_ahead > length(players[ii].feedback_law)
 		return players[ii].history[end][1]
 	else
 		return players[ii].feedback_law[steps_ahead](get_δb(players[ii], steps_ahead, state))
