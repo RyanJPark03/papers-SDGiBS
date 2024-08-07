@@ -215,11 +215,11 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				show(stdout, "text/plain", Q̂_u)
 				println()
 			end
-			pseudo_inverse = pinv(Q̂_uu)
-			jₖ .= - pseudo_inverse * Q̂_u
-			Kₖ .= - pseudo_inverse * Q̂_ub # overloaded notation, Kₖ has a different value in belief update
-			# jₖ .= - Q̂_uu \ Q̂_u
-			# Kₖ .= - Q̂_uu \ Q̂_ub # overloaded notation, Kₖ has a different value in belief update
+			# pseudo_inverse = pinv(Q̂_uu)
+			# jₖ .= - pseudo_inverse * Q̂_u
+			# Kₖ .= - pseudo_inverse * Q̂_ub # overloaded notation, Kₖ has a different value in belief update
+			jₖ .= - Q̂_uu \ Q̂_u
+			Kₖ .= - Q̂_uu \ Q̂_ub # overloaded notation, Kₖ has a different value in belief update
 			# println("Kₖ: ")
 			# show(stdout, "text/plain", Kₖ)
 			# println()
@@ -375,11 +375,11 @@ function calculate_matrix_belief_variables(β, u; env, players, calc_W = true)
 	f = (x) -> env.state_dynamics(
 			BlockVector(x[1:length(x̂ₖ)], mean_lengths),
 			BlockVector(x[length(x̂ₖ)+1:length(x̂ₖ)+length(uₖ)], [player.action_space for player in players]),
-			BlockArray(x[length(x̂ₖ)+length(uₖ)+1:end], [env.dynamics_noise_dim for _ in 1:num_players]), block = false)
+			BlockArray(x[length(x̂ₖ)+length(uₖ)+1:end], [env.dynamics_noise_dim for _ in 1:num_players]))
 
 	h = (x) -> env.observation_function(
 		states = BlockVector(x[1:length(x̂ₖ)], mean_lengths),
-		m = BlockVector(x[length(x̂ₖ)+1:end], [env.observation_noise_dim for _ in 1:num_players]), block = false)
+		m = BlockVector(x[length(x̂ₖ)+1:end], [env.observation_noise_dim for _ in 1:num_players]))
 
 
 	f_jacobian = ForwardDiff.jacobian(f, BlockVector(vcat([x̂ₖ, uₖ, m]...), [length(x̂ₖ), length(uₖ), length(m)]))
@@ -449,11 +449,11 @@ function calculate_belief_variables(env, players, observations, time, β, u_k)
 	f = (x) -> env.state_dynamics(
 		BlockVector(x[Block(1)], mean_lengths),
 		BlockVector(x[Block(2)], [player.action_space for player in players]),
-		BlockArray(x[Block(3)], [env.dynamics_noise_dim for _ in 1:num_players]), block = false)
+		BlockArray(x[Block(3)], [env.dynamics_noise_dim for _ in 1:num_players]))
 
 	h = (x) -> env.observation_function(
 		states = BlockVector(x[Block(1)], mean_lengths),
-		m = BlockVector(x[Block(2)], [env.observation_noise_dim for _ in 1:num_players]), block = false)
+		m = BlockVector(x[Block(2)], [env.observation_noise_dim for _ in 1:num_players]))
 
 	# println("gradient at:\n\t\tx̂ₖ: ", round.(x̂ₖ, digits = 5),"\n\t\tûₖ: ", uₖ,"\n\t\tmₖ: ", m)
 

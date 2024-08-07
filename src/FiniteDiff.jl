@@ -22,7 +22,7 @@ function finite_diff(f, x; ϵ = 1e-9)
             if any((x) -> imag(x) != 0.0, forward_perturbed)
                 @warn "Imaginary values found in Wₖ forward_perturb"
                 println("Wₖ forward_perturb")
-                show(stdio, "text/plain", forward_perturbed)
+                show(stdout, "text/plain", forward_perturbed)
                 forward_perturbed = abs.(forward_perturbed)
             end
 
@@ -31,7 +31,7 @@ function finite_diff(f, x; ϵ = 1e-9)
             if any((x) -> imag(x) != 0.0, back_perturbed)
                 @warn "Imaginary values found in Wₖ back_perturb"
                 println("Wₖ back_perturb")
-                show(stdio, "text/plain", back_perturbed)
+                show(stdout, "text/plain", back_perturbed)
                 back_perturbed = abs.(back_perturbed)
             end
 

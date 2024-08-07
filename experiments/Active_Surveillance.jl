@@ -203,9 +203,9 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		noise = norm(u)
 		return noise
 	end
-	function state_dynamics(states::Vector{T}, u, m;
-		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true) where T
-		new_state = Vector{T}(undef, length(states))
+	function state_dynamics(states, u, m;
+		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true)
+		new_state = []
 		for i in 1:2
 			x, y, θ, v = states[4 * (i - 1) + 1 : 4 * i]
 			accel, steer = u[2 * (i - 1) + 1 : 2 * i]
@@ -213,36 +213,10 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 			dv = ( (v * tan(steer)) / L )
 			ẋ = [v * cos(θ), v * sin(θ), dv, accel]
 
-			new_state[4 * (i - 1) + 1 : 4 * i] .= states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[2 * (i - 1) + 1 : 2 * i]) * m[4 * (i - 1) + 1 : 4 * i]
+			push!(new_state, states[4 * (i - 1) + 1 : 4 * i] + τ * ẋ + M(u[2 * (i - 1) + 1 : 2 * i]) * m[4 * (i - 1) + 1 : 4 * i])
 		end
-		return new_state
-	end
-
-	function state_dynamics(states::BlockVector{T}, u::BlockVector, m::BlockVector;
-			τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 10.0, ϵₛ::Float64 = 1e-6,
-			block=true) where T
-		new_state = Union{BlockVector, Vector}
-		if block
-			new_state = BlockVector{Any}(undef, [4 for _ in eachindex(blocks(states))])
-		else
-			new_state = Vector{T}(undef, 4 * length(blocks(states)))
-		end
-		for i in eachindex(blocks(states))
-			x, y, θ, v = states[Block(i)]
-			accel, steer = u[Block(i)]
-
-			δv = v * tan(steer) / L 
-			ẋ = [v * cos(θ), v * sin(θ), δv, accel]# assign 2 5 for drawing
-
-			# M scales motion noise mₖ according to size of u[i], i.e. more noise the bigger the control
-			if block
-				# new_state[Block(i)] .= states[Block(i)] + τ * ẋ + 0.0 .* m[Block(i)]
-				new_state[Block(i)] .= states[Block(i)] + τ * ẋ + M(u[Block(i)]) * m[Block(i)]
-			else
-				new_state[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + τ * ẋ + M(u[Block(i)]) * m[Block(i)]
-			end
-		end
-		return new_state
+		# return new_state
+		return vcat(new_state...)
 	end
 
 	function measurement_noise_scaler1(state::Vector; surveillance_center = [0, 0], surveillance_radius::Int = 10)
@@ -280,22 +254,13 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		return noise
 	end
 
-	function observation_function(; states::BlockVector{T}, m, N::Function = measurement_noise_scaler1, block=true) where T
-		observations = Union{BlockVector, Vector}
-		if block
-			observations = BlockVector{Float64}(undef, [4 for _ in eachindex(blocks(states))])
-		else
-			observations = Vector{T}(undef, 4 * length(blocks(states)))
-		end
-		for i in eachindex(blocks(states))
-			if block
-				observations[Block(i)] .= states[Block(i)] + N(states[Block(i)]) * m[Block(i)]
-			else
-				observations[4 * (i - 1) + 1 : 4 * i] .= states[Block(i)] + N(states[Block(i)]) * m[Block(i)]
-			end
+	function observation_function(; states, m, N::Function = measurement_noise_scaler1)
+		observations = []
+		for i in 1:2
+			push!(observations, states[4 * (i - 1) + 1 : 4 * i] + N(states[4 * (i - 1) + 1 : 4 * i]) * m[4 * (i - 1) + 1 : 4 * i])
 		end
 
-		return observations
+		return vcat(observations...)
 	end
 
 	function cₖ¹(β, u)
