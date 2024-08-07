@@ -20,7 +20,7 @@ function finite_diff(f, x; ϵ = 1e-9)
             x_perturbed[idx] += perturbation
             forward_perturbed = f(x_perturbed)
             if any((x) -> imag(x) != 0.0, forward_perturbed)
-                @warn "Imaginary values found in Wₖ forward_perturb"
+                @warn "Imaginary values found in Wₖ forward_perturb (state)"
                 println("Wₖ forward_perturb")
                 show(stdout, "text/plain", forward_perturbed)
                 forward_perturbed = abs.(forward_perturbed)
@@ -29,7 +29,7 @@ function finite_diff(f, x; ϵ = 1e-9)
             x_perturbed[idx] -= 2 * perturbation
             back_perturbed = f(x_perturbed)
             if any((x) -> imag(x) != 0.0, back_perturbed)
-                @warn "Imaginary values found in Wₖ back_perturb"
+                @warn "Imaginary values found in Wₖ back_perturb (state)"
                 println("Wₖ back_perturb")
                 show(stdout, "text/plain", back_perturbed)
                 back_perturbed = abs.(back_perturbed)
@@ -48,12 +48,24 @@ function finite_diff(f, x; ϵ = 1e-9)
                 perturbation = ϵ * x[idx] / n
                 x_perturbed[idx] += perturbation
                 x_perturbed[mirror_idx] += perturbation
-                forward_perturbed = abs.(f(x_perturbed))
+                forward_perturbed = f(x_perturbed)
+                if any((x) -> imag(x) != 0.0, forward_perturbed)
+                    @warn "Imaginary values found in Wₖ forward_perturb (cov)"
+                    println("Wₖ forward_perturb (cov)")
+                    show(stdout, "text/plain", forward_perturbed)
+                    forward_perturbed = abs.(forward_perturbed)
+                end
                 
+
                 x_perturbed[idx] -= 2 * perturbation
                 x_perturbed[mirror_idx] -= 2 * perturbation
-                back_perturbed = abs.(f(x_perturbed))
-
+                back_perturbed = f(x_perturbed)
+                if any((x) -> imag(x) != 0.0, back_perturbed)
+                    @warn "Imaginary values found in Wₖ back_perturb (cov)"
+                    println("Wₖ back_perturb (cov)")
+                    show(stdout, "text/plain", back_perturbed)
+                    back_perturbed = abs.(back_perturbed)
+                end
                 grad[:, :, idx] = (back_perturbed - forward_perturbed) / (4ϵ)
                 grad[:, :, mirror_idx] = (back_perturbed - forward_perturbed) / (4ϵ)
             end
@@ -63,10 +75,22 @@ function finite_diff(f, x; ϵ = 1e-9)
             idx = 40 + (2 * (player - 1)) + i
             perturbation = ϵ * x[idx] / n
             x_perturbed[idx] += perturbation
-            forward_perturbed = abs.(f(x_perturbed))
+            forward_perturbed = f(x_perturbed)
+            if any((x) -> imag(x) != 0.0, forward_perturbed)
+                @warn "Imaginary values found in Wₖ forward_perturb (action)"
+                println("Wₖ forward_perturb (action)")
+                show(stdout, "text/plain", forward_perturbed)
+                forward_perturbed = abs.(forward_perturbed)
+            end
 
             x_perturbed[idx] -= 2 * perturbation
-            back_perturbed = abs.(f(x_perturbed))
+            back_perturbed = f(x_perturbed)
+            if any((x) -> imag(x) != 0.0, back_perturbed)
+                @warn "Imaginary values found in Wₖ back_perturb (action)"
+                println("Wₖ back_perturb (action)")
+                show(stdout, "text/plain", back_perturbed)
+                back_perturbed = abs.(back_perturbed)
+            end
 
             grad[:, :, idx] = (back_perturbed - forward_perturbed) / (2ϵ)
         end
