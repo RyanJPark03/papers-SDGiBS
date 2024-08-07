@@ -65,7 +65,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	μᵦ = [copy(μᵦₒ) for _ in 1:length(players)]
 	μᵤ = [copy(μᵤₒ) for _ in 1:length(players)]
 	# fig = Figure()
-	# solver_iter_solutions = []
+	solver_iter_solutions = []
 
 	# Convenience variables
 	N = env.num_agents
@@ -123,8 +123,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 
 	# Initial nominal trajectory
 	b̄, ū, _ = simulate(env, players, u_k, nothing, env.time, final_planning_time)
-	# push!(solver_iter_solutions, get_plottables(b̄, ū))
-	push!(env.solver_history[end], get_plottables(b̄, ū))
+	push!(solver_iter_solutions, get_plottables(b̄, ū))
 
 
 	# Sanity check
@@ -178,6 +177,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 
 			for ii in 1:N
 				cost_vars = ForwardDiff.hessian!(cost_vars, ck[ii], x_u)
+				# Main.@infiltrate imag(DiffResults.value(cost_vars) + V[ii] + 0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:ηₓ])) != 0.0
 				Qⁱ[ii] = DiffResults.value(cost_vars) + V[ii] +
 					0.5 * sum([Wₖ[1:end, j]' * V_bb[ii] * Wₖ[1:end, j] for j in 1:ηₓ])
 				Qₛⁱ[ii] = DiffResults.gradient(cost_vars) + gₛ' * V_b[ii] +
@@ -236,7 +236,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 		# Forwards Pass
 
 		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time, final_planning_time; noise=false)
-		push!(env.solver_history[end], get_plottables(b̄_new, ū_new))
+		push!(solver_iter_solutions, get_plottables(b̄_new, ū_new))
 		println("solving .... new ū:")
 		show(stdout, "text/plain", ū_new)
 		println()
@@ -266,6 +266,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 			end
 		end
 		if any([μᵤ[ii] > 1e10 || μᵦ[ii] > 1e10 || μᵤ[ii] < 1e-10 || μᵦ[ii] < 1e-10 for ii in eachindex(players)])
+			plot_error(solver_iter_solutions)
 			error("did not converge...")
 			break
 		end
@@ -273,6 +274,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	println("solver ran for ", iter, " iterations")
 	println("\tdeltaQ: ", deltaQ,"\n\tQ_new: ", Q_new, "\n\tQ_old: ", Q_old)
 	println("\tdeltaQ norm: ", norm(deltaQ, 2), ", ϵ = ", ϵ, ", iter: ", iter)
+	push!(env.solver_history, solver_iter_solutions)
 	return b̄, ū, π
 end
 
@@ -513,5 +515,37 @@ function getellipsepoints(cx, cy, rx, ry, θ)
 	x = @. cx + r_ellipse[:,1]
 	y = @. cy + r_ellipse[:,2]
 	[Point2f(t) for t in zip(x, y)]
+end
+
+function plot_error(plottables)
+	fig = Figure()
+	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
+	sg = SliderGrid(
+        fig[2, 1],
+        (label = "solver iteration", range = 1:length(plottables), format = x-> "", startvalue = 1)
+    )
+    solver_iteration = lift(sg.sliders[1].value) do a
+        Int(a)
+    end
+	player_locations = lift(solver_iteration) do a
+		# time_slices = [get_history(player, a) for player in demo.players]
+		time_slice = plottables[a]
+
+		player_1_point = [Point2f(time_slice.p1x[i], time_slice.p1y[i]) for i in eachindex(time_slice.p1x)]
+		player_2_point = [Point2f(time_slice.p2x[i], time_slice.p2y[i]) for i in eachindex(time_slice.p2x)]
+		return player_1_point, player_2_point, time_slice.p1e[end], time_slice.p2e[end]
+	end
+
+	p1p = @lift $(player_locations)[1]
+	p2p = @lift $(player_locations)[2]
+	p1e = @lift $(player_locations)[3]
+	p2e = @lift $(player_locations)[4]
+
+	scatterlines!(ax, p1p; color = :blue)
+	scatterlines!(ax, p2p; color = :red)
+	lines!(ax, p1e; color = :black)
+	lines!(ax, p2e; color = :black)
+	display(fig)
+	return fig
 end
 end
