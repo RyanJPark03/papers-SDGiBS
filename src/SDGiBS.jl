@@ -241,7 +241,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 		# Forwards Pass
 
 		b̄_new, ū_new, _ = simulate(env, players, π, b̄, env.time, final_planning_time; noise=false)
-		push!(solver_iter_solutions, get_plottables(b̄_new, ū_new))
+		# push!(solver_iter_solutions, get_plottables(b̄_new, ū_new))
 		println("solving .... new ū:")
 		show(stdout, "text/plain", ū_new)
 		println()
@@ -253,8 +253,8 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 		for ii in eachindex(players)
 			if Q_new[ii] > Q_old[ii]
 				println("increasing regularization for player ", ii)
-				μᵤ[ii] *= 1.5
-				μᵦ[ii] *= 1.5
+				μᵤ[ii] *= 50.0
+				μᵦ[ii] *= 50.0
 			else
 				println("decreasing regularization for player ", ii)
 				if !set_new_iter# Don't want other players to change iteration variables if previous players have already done so
@@ -264,9 +264,10 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 					Q_old = Q_new
 					b̄ = b̄_new
 					ū = ū_new
+					push!(solver_iter_solutions, get_plottables(b̄_new, ū_new))
 				end
-				μᵤ[ii] /= 1.1
-				μᵦ[ii] /= 1.1
+				μᵤ[ii] /= 10
+				μᵦ[ii] /= 10
 				# max(μᵤ[ii], .4)
 				# max(μᵦ[ii], .4)
 				
@@ -293,7 +294,7 @@ function create_policy(nominal_control, feed_forward, feed_backward)
 	show(stdout, "text/plain", feed_backward)
 	println("")
 	function (δb)
-		return nominal_control + 1.0 * (vec(feed_forward) + feed_backward * δb)
+		return nominal_control + 0.5 * (vec(feed_forward) + feed_backward * δb)
 	end
 end
 

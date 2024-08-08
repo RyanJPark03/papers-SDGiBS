@@ -26,7 +26,7 @@ end
 function active_surveillance_demo_main()
 	open("./out.temp", "w") do file
 		redirect_stdout(file) do 
-			run_active_surveillance_demo(30, .1, 15)
+			run_active_surveillance_demo(30, .125, 3)
 		end
 	end
 end
@@ -170,13 +170,13 @@ end
 function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radius::Int = 10, 
 	L::Int = 1)
 	# Magic Numbers
-	p1_effort = 0.1
+	p1_effort = 0.001
 	p1_end_cost_weight = 10.0
-	α₁ = .001
-	α₂ = .01
-	p2_effort = .001
+	α₁ = .1 # stay at desired velocity
+	α₂ = .001 # don't collide
+	p2_effort = 1.0
 	vₖ_des = 10.0
-	collision_exponent_multiplier = 10.0
+	collision_exponent_multiplier = 0.2
 
 	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
 	initial_state[Block(1)] .= [surveillance_center[1] - 8.0, surveillance_center[2] + 18.0, -0.01, 10.0] # Player 1, surveiller
@@ -184,8 +184,8 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
 	initial_cov_matrix = [
-		10.0 0.0 0.0 0.0;
-		0.0 10.0 0.0 0.0;
+		7.0 0.0 0.0 0.0;
+		0.0 7.0 0.0 0.0;
 		0.0 0.0 0.006 0.0;
 		0.0 0.0 0.0 0.5;
 	]
