@@ -38,11 +38,18 @@ function run_active_surveillance_demo(time_steps, τ; verbose = false)
 	demo = init(time_steps, τ; surveillance_center = surveillance_center, surveillance_radius = surveillance_radius, L = 1)
     trajectory = []
     push!(trajectory, demo.env.current_state)
+	final_time = 1
 
-    for tt in ProgressBar(1:demo.env.final_time - 1)
-		time_step_all_coop(demo.players, demo.env)
-        push!(trajectory, demo.env.current_state)
-    end
+	try
+		for tt in ProgressBar(1:demo.env.final_time - 1)
+			time_step_all_coop(demo.players, demo.env)
+			push!(trajectory, demo.env.current_state)
+			final_time = tt
+		end
+	catch e
+		println("did not finish, ran into an error")
+		println("Error: ", e)
+	end
 	coords1 = [[x[1] for x in trajectory], [x[2] for x in trajectory]]
 	coords2 = [[x[5] for x in trajectory], [x[6] for x in trajectory]]
 
@@ -55,8 +62,7 @@ function run_active_surveillance_demo(time_steps, τ; verbose = false)
 	[demo.players[2].history[x][2][2] for x in 2:length(demo.players[1].history)]]
 
 	costs = []
-	for tt in 1 : demo.env.final_time
-		
+	for tt in 1 : final_time
 		time_slices = [get_history(player, tt) for player in demo.players]
 
 		beliefs = vcat([time_slice[3] for time_slice in time_slices]...)
@@ -72,11 +78,9 @@ function run_active_surveillance_demo(time_steps, τ; verbose = false)
 			show(stdout, "text/plain", p2_cov)
 			println()
 		end
-
 		push!(costs, (p1_costs, p2_costs))
 	end
 	verbose || show(stdout, "text/plain", costs)
-
 
 	fig = Figure()
 	single_time_graph = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
@@ -86,17 +90,18 @@ function run_active_surveillance_demo(time_steps, τ; verbose = false)
 	input_solver_iter_upper_limit = 1024
 	sg = SliderGrid(
         fig[2, 1],
-        (label = "time", range = 1:demo.env.final_time, format = x-> "", startvalue = 1),
+        (label = "time", range = 1:final_time, format = x-> "", startvalue = 1),
 		(label = "solver iteration", range = 1:input_solver_iter_upper_limit, format = x-> "", startvalue = 1)
     )
 	sg_values = [s.value for s in sg.sliders]
 	observable_sliders = lift(sg_values...) do input_time, input_solver_iter
 		time = Int(input_time)
 
-		actual_num_iterations = length(demo.env.solver_history[Int(input_time)])
+		actual_num_iterations = max(1, length(demo.env.solver_history[Int(input_time)]))
 		solver_iter_num = round(Int, (input_solver_iter / input_solver_iter_upper_limit) * actual_num_iterations)
 		solver_iter_num = max(1, solver_iter_num)
 		solver_iter_num = min(actual_num_iterations, solver_iter_num)
+		# Main.@infiltrate solver_iter_num == 0
 		return [time, solver_iter_num]
 	end
 	player_locations = lift(observable_sliders) do slider_values
@@ -128,12 +133,14 @@ function run_active_surveillance_demo(time_steps, τ; verbose = false)
 	lines!(single_time_graph, player_2_cov; color = (:red, .75))
 	arc!(single_time_graph, Point2f(surveillance_center[1], surveillance_center[2]), surveillance_radius, 0, 2π; color = :black)
 	#for sizing:
-	# scatter!(single_time_graph, belief_coords1[1][end], belief_coords1[2][end]; color = :black, markersize = 1)
-	# scatter!(single_time_graph, belief_coords2[1][end], belief_coords2[2][end]; color = :black, markersize = 1)
+	scatter!(single_time_graph, belief_coords1[1][end], belief_coords1[2][end]; color = :black, markersize = 1)
+	scatter!(single_time_graph, belief_coords2[1][end], belief_coords2[2][end]; color = :black, markersize = 1)
 
 	solver_iteration_trajectory = lift(observable_sliders) do slider_values
 		time = slider_values[1]
-		solver_iter = slider_values[2]
+		solver_iter = max(1, slider_values[2])
+		println("time: ", time, " solver_iter: ", solver_iter)
+		println("len solv_hist[time]", length(demo.env.solver_history[time]))
 		time_slice = demo.env.solver_history[time][solver_iter]
 
 		player_1_point = [Point2f(time_slice.p1x[i], time_slice.p1y[i]) for i in eachindex(time_slice.p1x)]
@@ -165,13 +172,13 @@ end
 function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radius::Int = 10, 
 	L::Int = 1)
 	# Magic Numbers
-	p1_effort = .001
-	p1_end_cost_weight = .1
+	p1_effort = 0.1
+	p1_end_cost_weight = 10.0
 	α₁ = .001
-	α₂ = 3.000
-	p2_effort = 1.0
+	α₂ = .001
+	p2_effort = .001
 	vₖ_des = 10.0
-	collision_exponent_multiplier = 0.2
+	collision_exponent_multiplier = 10.0
 
 	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
 	initial_state[Block(1)] .= [surveillance_center[1] - 8.0, surveillance_center[2] + 18.0, -0.01, 10.0] # Player 1, surveiller
@@ -200,8 +207,9 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 		# println("observation noise:")
 		# show(stdout, "text/plain", noise)
 		# println()
-		noise = norm(u)
+		noise = norm(u) * 1e-5
 		return noise
+		# return 0.0
 	end
 	function state_dynamics(states, u, m;
 		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true)

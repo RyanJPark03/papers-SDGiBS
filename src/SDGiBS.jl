@@ -59,7 +59,7 @@ end
 """
 
 export SDGiBS_solve_action
-function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, μᵦₒ = 1.0, μᵤₒ = 1.0, ϵ = 1e-4)
+function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, μᵦₒ = 1.0, μᵤₒ = 1.0, ϵ = 1e-3)
 	println("calling solver ...")
 
 	μᵦ = [copy(μᵦₒ) for _ in 1:length(players)]
@@ -121,8 +121,11 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	u_k = (tt, belief_state) -> (tt == horizon) ? BlockVector([0.0 for _ in 1:ηᵤ], action_space) :
 		total_feedback_law(tt, belief_state) 
 
+	# initialize final answer
+	π::Array{Function} = [(belief_state) -> u_k(tt, belief_state) for tt in 1:actual_horizon]
+
 	# Initial nominal trajectory
-	b̄, ū, _ = simulate(env, players, u_k, nothing, env.time, final_planning_time)
+	b̄, ū, _ = simulate(env, players, π, nothing, env.time, final_planning_time)
 	push!(solver_iter_solutions, get_plottables(b̄, ū))
 
 
@@ -138,15 +141,14 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	iter = 0
 	set_new_iter = false
 
-	# initialize final answer
-	π::Array{Function} = [(belief_state) -> u_k(tt, belief_state) for tt in 1:actual_horizon]
-
 	# Functions to grab matrix form of belief update
 	#	bₖ₊₁ ≈ gₖ + Wₖ * Εₖ, where Εₖ ~ N(0, I)
 	W = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players)[1]
 	g = (x) -> calculate_matrix_belief_variables(x[1:ηₓ + ηₓₓ], x[ηₓ + ηₓₓ+1:end]; env = env, players = players, calc_W = false)[2]
 
-	while norm(deltaQ, 2) > ϵ
+	# while norm(deltaQ, 2) > ϵ && norm(deltaQ, 2) > (ϵ * norm(Q_old, 2))
+	while norm(deltaQ, 2) > 1
+	# while norm(deltaQ, 2) > ϵ 
 		set_new_iter = false
 		# Backward Pass
 		println("iter: ", iter)
@@ -167,8 +169,9 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 			tt_idx = tt - env.time + 1
 
 			# Construct concatenated state-action vector
-			println("planning at tt: ", tt, "converted into tt_idx: ", tt_idx)
+			println("planning at tt: ", tt, ", converted into tt_idx: ", tt_idx)
 			x_u .= vcat(b̄[tt_idx][1:end], π[tt_idx](b̄[tt_idx])[1:end])
+			println("x_u: ", x_u)
 
 			# Calculate Wₖ and gₖ # TODO: in place
 			Wₖ = W(x_u)
@@ -203,17 +206,18 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 				# Control regularization
 				Qₛₛⁱ[ii] += μᵤ[ii] * I
 				Q_uuⁱ[ii] = Qₛₛⁱ[ii][ηₓ + ηₓₓ + 1:end, ηₓ + ηₓₓ + 1:end]
-				println("after player ", ii, "'s backpass at time: ", tt)
+				
 				Q̂_uu[prev_action_spaces+1:prev_and_cur_action_spaces, :] = 
 					Qₛₛⁱ[ii][ηₓ+ηₓₓ+prev_action_spaces+1:ηₓ+ηₓₓ+prev_and_cur_action_spaces, ηₓ+ηₓₓ+1:end]
-				show(stdout, "text/plain", Q̂_uu)
-				println()
-				println("Qub:")
-				show(stdout, "text/plain", Q̂_ub)
-				println()
-				println("Qu")
-				show(stdout, "text/plain", Q̂_u)
-				println()
+				# println("after player ", ii, "'s backpass at time: ", tt)
+				# show(stdout, "text/plain", Q̂_uu)
+				# println()
+				# println("Qub:")
+				# show(stdout, "text/plain", Q̂_ub)
+				# println()
+				# println("Qu")
+				# show(stdout, "text/plain", Q̂_u)
+				# println()
 			end
 			# pseudo_inverse = pinv(Q̂_uu)
 			# jₖ .= - pseudo_inverse * Q̂_u
@@ -223,6 +227,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 			# println("Kₖ: ")
 			# show(stdout, "text/plain", Kₖ)
 			# println()
+			println("creating policy at time idx ", tt_idx, ", time ", tt)
 			π[tt_idx] = create_policy(ū[tt_idx], jₖ, Kₖ)
 
 			# Backwards iteration of value function
@@ -260,12 +265,14 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 					b̄ = b̄_new
 					ū = ū_new
 				end
-				μᵤ[ii] /= 1.5
-				μᵦ[ii] /= 1.5
+				μᵤ[ii] /= 1.1
+				μᵦ[ii] /= 1.1
+				# max(μᵤ[ii], .4)
+				# max(μᵦ[ii], .4)
 				
 			end
 		end
-		if any([μᵤ[ii] > 1e10 || μᵦ[ii] > 1e10 || μᵤ[ii] < 1e-10 || μᵦ[ii] < 1e-10 for ii in eachindex(players)])
+		if any([μᵤ[ii] > 1e15 || μᵦ[ii] > 1e15 || μᵤ[ii] < 1e-15 || μᵦ[ii] < 1e-15 for ii in eachindex(players)])
 			plot_error(solver_iter_solutions)
 			error("did not converge...")
 			break
@@ -275,10 +282,20 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	println("\tdeltaQ: ", deltaQ,"\n\tQ_new: ", Q_new, "\n\tQ_old: ", Q_old)
 	println("\tdeltaQ norm: ", norm(deltaQ, 2), ", ϵ = ", ϵ, ", iter: ", iter)
 	push!(env.solver_history, solver_iter_solutions)
+
+	# For debugging
+	# plot_error(solver_iter_solutions)
+	# error("its on purpose i swear")
+
 	return b̄, ū, π
 end
 
 function create_policy(nominal_control, feed_forward, feed_backward)
+	println("feed forward jₖ")
+	show(stdout, "text/plain", feed_forward)
+	println("\nfeedback Kₖ")
+	show(stdout, "text/plain", feed_backward)
+	println("")
 	function (δb)
 		return nominal_control + 1.0 * (vec(feed_forward) + feed_backward * δb)
 	end
@@ -289,7 +306,7 @@ function simulate(env, players, ū, b̄, time, end_time; noise = false)
 	sts = [BlockVector{Float64}(undef, [env.state_dim for _ in eachindex(players)]) for _ in time:end_time]
 	ū_actual = [BlockVector{Float64}(undef, [player.action_space for player in players]) for _ in time:end_time-1]
 
-	belief_length = length(players[1].belief[Block(1)]) # TODO: make adjustable per player
+	belief_length = length(players[1].belief[Block(1)])
 	b̄_new[1] = BlockVector(vcat([players[ii].history[time][3] for ii in eachindex(players)]...),
 		[belief_length for player in players])
 	sts[1] .= env.current_state
@@ -299,13 +316,9 @@ function simulate(env, players, ū, b̄, time, end_time; noise = false)
 
 	for tt in time:end_time-1
 		println("simulating time: ", tt)
-		if isa(ū, Function)
-			if isnothing(b̄) # first rollout does not have a nominal trajectory
-				ū_actual[tt-time+1] .= vcat([player.history[end][1] for player in players]...)
-			else
-				ū_actual[tt-time+1] .= ū(tt, δb = b̄_new[tt-time+1] - b̄[tt-time+1])
-			end
-		elseif typeof(ū) == Vector{Function}
+		if isnothing(b̄)
+			ū_actual[tt-time+1] .= ū[tt-time+1](b̄_new[tt-time+1])
+		else
 			println("\tb's: ", b̄_new[tt-time+1][1:20], "\n\t",  b̄_new[tt-time+1][21:end],"\n\t", b̄[tt-time+1][1:20], "\n\t", b̄[tt-time+1][21:end])
 			δb = b̄_new[tt-time+1] - b̄[tt-time+1]
 			println("\tδb = ", δb[1:20])
@@ -543,8 +556,11 @@ function plot_error(plottables)
 
 	scatterlines!(ax, p1p; color = :blue)
 	scatterlines!(ax, p2p; color = :red)
-	lines!(ax, p1e; color = :black)
-	lines!(ax, p2e; color = :black)
+	lines!(ax, p1e; color = (:blue, 0.5))
+	lines!(ax, p2e; color = (:red, 0.5))
+
+	arc!(ax, Point2f(5, 5), 10, 0, 2π; color = :black)
+
 	display(fig)
 	return fig
 end

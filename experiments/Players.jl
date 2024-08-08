@@ -176,7 +176,7 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 		[player.action_space for player in players])
 	
 	# Iterate environment
-	unroll(env, players; noise = false, noise_clip = false, noise_clip_val = 0.1, store_solver_history = true)
+	unroll(env, players; noise = false, noise_clip = false, noise_clip_val = 0.1)
 
 	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 1.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
 	[env.observation_noise_dim for _ in 1:env.num_agents])
@@ -188,13 +188,15 @@ function time_step_all_coop(players::Array{Player}, env::base_environment)
 	old_beliefs = get_full_belief_state(players)
 	# new_beliefs = [SDGiBS.belief_update(env, players, observations)[Block(ii)] for ii in 1:env.num_agents]
 	new_beliefs = SDGiBS.belief_update(env, players, observations, actions)
+
+	obs_spaces = [players[ii].observation_space for ii in eachindex(players)]
 	
 	for ii in eachindex(players)
 		player = players[ii]
 		player.belief = new_beliefs[Block(ii)]
 		action = get_action(players, ii, 1; state = old_beliefs)
 		# Main.@infiltrate
-		push!(player.history, [action, observations[Block(ii)], player.belief])
+		push!(player.history, [action, observations[sum(obs_spaces[1:ii-1])+1:sum(obs_spaces[1:ii])], player.belief])
 	end
 end
 
