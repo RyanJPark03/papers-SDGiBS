@@ -82,8 +82,8 @@ function handle_SDGiBS_action(players::Array{Player}, env::base_environment,
 	players[current_player_index].feedback_law = π
 end
 
-function handle_SDGiBS_action_coop(players::Array{Player}, env::base_environment, action_selector, time::Int = 1)
-	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦₒ = 1.0, μᵤₒ = 1.0, horizon = 10)
+function handle_SDGiBS_action_coop(players::Array{Player}, env::base_environment, action_selector, time::Int = 1; horizon = 15)
+	(b̄, ū, π) = SDGiBS_solve_action(players, env, action_selector; μᵦₒ = 1.0, μᵤₒ = 1.0, horizon = horizon)
 	for ii in eachindex(players)
 		players[ii].predicted_belief = b̄
 		players[ii].predicted_control = ū
@@ -165,11 +165,11 @@ function time_step_all(players::Array{Player}, env::base_environment)
 end
 
 export time_step_all_coop
-function time_step_all_coop(players::Array{Player}, env::base_environment)
+function time_step_all_coop(players::Array{Player}, env::base_environment; horizon = 15)
 	# Act, Obs, Upd
 
 	# Act
-	handle_SDGiBS_action_coop(players, env, get_action, env.time)
+	handle_SDGiBS_action_coop(players, env, get_action, env.time; horizon = horizon)
 	cur_beliefs = get_full_belief_state(players)
 	actions = BlockVector(
 		vcat([get_action(players, ii, 1; state = cur_beliefs) for ii in eachindex(players)]...),

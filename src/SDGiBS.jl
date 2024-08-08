@@ -273,7 +273,7 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 			end
 		end
 		if any([μᵤ[ii] > 1e15 || μᵦ[ii] > 1e15 || μᵤ[ii] < 1e-15 || μᵦ[ii] < 1e-15 for ii in eachindex(players)])
-			plot_error(solver_iter_solutions)
+			push!(env.solver_history, solver_iter_solutions)
 			error("did not converge...")
 			break
 		end
@@ -282,10 +282,6 @@ function SDGiBS_solve_action(players::Array, env, action_selector; horizon = 1, 
 	println("\tdeltaQ: ", deltaQ,"\n\tQ_new: ", Q_new, "\n\tQ_old: ", Q_old)
 	println("\tdeltaQ norm: ", norm(deltaQ, 2), ", ϵ = ", ϵ, ", iter: ", iter)
 	push!(env.solver_history, solver_iter_solutions)
-
-	# For debugging
-	# plot_error(solver_iter_solutions)
-	# error("its on purpose i swear")
 
 	return b̄, ū, π
 end
@@ -530,38 +526,4 @@ function getellipsepoints(cx, cy, rx, ry, θ)
 	[Point2f(t) for t in zip(x, y)]
 end
 
-function plot_error(plottables)
-	fig = Figure()
-	ax = Axis(fig[1, 1], xlabel = "x", ylabel = "y")
-	sg = SliderGrid(
-        fig[2, 1],
-        (label = "solver iteration", range = 1:length(plottables), format = x-> "", startvalue = 1)
-    )
-    solver_iteration = lift(sg.sliders[1].value) do a
-        Int(a)
-    end
-	player_locations = lift(solver_iteration) do a
-		# time_slices = [get_history(player, a) for player in demo.players]
-		time_slice = plottables[a]
-
-		player_1_point = [Point2f(time_slice.p1x[i], time_slice.p1y[i]) for i in eachindex(time_slice.p1x)]
-		player_2_point = [Point2f(time_slice.p2x[i], time_slice.p2y[i]) for i in eachindex(time_slice.p2x)]
-		return player_1_point, player_2_point, time_slice.p1e[end], time_slice.p2e[end]
-	end
-
-	p1p = @lift $(player_locations)[1]
-	p2p = @lift $(player_locations)[2]
-	p1e = @lift $(player_locations)[3]
-	p2e = @lift $(player_locations)[4]
-
-	scatterlines!(ax, p1p; color = :blue)
-	scatterlines!(ax, p2p; color = :red)
-	lines!(ax, p1e; color = (:blue, 0.5))
-	lines!(ax, p2e; color = (:red, 0.5))
-
-	arc!(ax, Point2f(5, 5), 10, 0, 2π; color = :black)
-
-	display(fig)
-	return fig
-end
 end

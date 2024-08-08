@@ -26,12 +26,12 @@ end
 function active_surveillance_demo_main()
 	open("./out.temp", "w") do file
 		redirect_stdout(file) do 
-			run_active_surveillance_demo(30, .1)
+			run_active_surveillance_demo(30, .1, 15)
 		end
 	end
 end
 
-function run_active_surveillance_demo(time_steps, τ; verbose = false)
+function run_active_surveillance_demo(time_steps, τ, horizon; verbose = false)
 	surveillance_center = [5, 5]
 	surveillance_radius = 10
 	
@@ -42,7 +42,7 @@ function run_active_surveillance_demo(time_steps, τ; verbose = false)
 
 	try
 		for tt in ProgressBar(1:demo.env.final_time - 1)
-			time_step_all_coop(demo.players, demo.env)
+			time_step_all_coop(demo.players, demo.env; horizon = horizon)
 			push!(trajectory, demo.env.current_state)
 			final_time = tt
 		end
@@ -139,8 +139,6 @@ function run_active_surveillance_demo(time_steps, τ; verbose = false)
 	solver_iteration_trajectory = lift(observable_sliders) do slider_values
 		time = slider_values[1]
 		solver_iter = max(1, slider_values[2])
-		println("time: ", time, " solver_iter: ", solver_iter)
-		println("len solv_hist[time]", length(demo.env.solver_history[time]))
 		time_slice = demo.env.solver_history[time][solver_iter]
 
 		player_1_point = [Point2f(time_slice.p1x[i], time_slice.p1y[i]) for i in eachindex(time_slice.p1x)]
@@ -175,7 +173,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	p1_effort = 0.1
 	p1_end_cost_weight = 10.0
 	α₁ = .001
-	α₂ = .001
+	α₂ = .01
 	p2_effort = .001
 	vₖ_des = 10.0
 	collision_exponent_multiplier = 10.0
