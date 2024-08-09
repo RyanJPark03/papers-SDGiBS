@@ -179,7 +179,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	collision_exponent_multiplier = 0.2
 
 	initial_state = BlockVector{Float64}(undef, [4 for _ in 1:2])
-	initial_state[Block(1)] .= [surveillance_center[1] - 8.0, surveillance_center[2] + 18.0, -0.01, 10.0] # Player 1, surveiller
+	initial_state[Block(1)] .= [surveillance_center[1] - 8.0, surveillance_center[2] + 18.0, -0.01, 9.0] # Player 1, surveiller
 	initial_state[Block(2)] .= [surveillance_center[1] - 10.0, surveillance_center[2] + 15.0, -0.01, 10.0]
 
 	initial_beliefs = BlockVector{Float64}(undef, [20, 20])
@@ -193,21 +193,9 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	initial_beliefs[Block(2)] .= vcat(copy(initial_state[Block(2)]), vec(copy(initial_cov_matrix)))
 
 
-	function state_dynamics_noise_scaler(u) # TODO: make it work
-		# accel_noise = abs(u[1])
-		# steer_noise = 1e-5 * abs(u[2])
-		# noise = [
-		# 	accel_noise * max(1, steer_noise) 0 0 0;
-		# 	0 accel_noise * max(1, steer_noise) 0 0;
-		# 	0 0 steer_noise 0;
-		# 	0 0 0 accel_noise
-		# ]
-		# println("observation noise:")
-		# show(stdout, "text/plain", noise)
-		# println()
+	function state_dynamics_noise_scaler(u) 
 		noise = norm(u) * 1e-5
 		return noise
-		# return 0.0
 	end
 	function state_dynamics(states, u, m;
 		τ::Float64 = τₒ, M::Function = state_dynamics_noise_scaler, L::Float64 = 1.0, block=true)

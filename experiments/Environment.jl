@@ -41,8 +41,7 @@ function init_base_environment(;
 		[])
 end
 
-function unroll(env::base_environment, players;
-    noise=false, noise_clip = false, noise_clip_val = .1)
+function unroll(env::base_environment, players; noise=false)
 	println("unrolling")
 	if 1 + env.time > env.final_time
 		println("Time steps exceed final time")
@@ -58,12 +57,7 @@ function unroll(env::base_environment, players;
 		actions[Block(ii)] .= act
 	end
 
-	n = rand(Distributions.Normal(0.0, 1.0), env.dynamics_noise_dim*env.num_agents)
-	if noise_clip
-		n = min.(n, noise_clip_val)
-		n = max.(n, -noise_clip_val)
-	end
-	dn = (noise) ? n : zeros(env.dynamics_noise_dim*env.num_agents)
+	dn = (noise) ? rand(Distributions.Normal(0.0, 1.0), env.dynamics_noise_dim*env.num_agents) : zeros(env.dynamics_noise_dim*env.num_agents)
 	dyn_noise = BlockVector(dn, [env.dynamics_noise_dim for _ in 1:env.num_agents])
 	env.current_state = env.state_dynamics(env.current_state, actions, dyn_noise)
 	push!(env.history, env.current_state)

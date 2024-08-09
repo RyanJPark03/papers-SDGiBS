@@ -176,7 +176,7 @@ function time_step_all_coop(players::Array{Player}, env::base_environment; horiz
 		[player.action_space for player in players])
 	
 	# Iterate environment
-	unroll(env, players; noise = false, noise_clip = false, noise_clip_val = 0.1)
+	unroll(env, players; noise = true)
 
 	m = BlockVector(vcat([rand(Distributions.Normal(0.0, 1.0), env.observation_noise_dim) for _ in 1:env.num_agents]...),
 	[env.observation_noise_dim for _ in 1:env.num_agents])
