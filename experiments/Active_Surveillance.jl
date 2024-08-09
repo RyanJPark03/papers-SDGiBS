@@ -171,7 +171,7 @@ function init(time_steps, τₒ; surveillance_center = [0, 0], surveillance_radi
 	L::Int = 1)
 	# Magic Numbers
 	p1_effort = 0.001
-	p1_end_cost_weight = 10.0
+	p1_end_cost_weight = 0.00001
 	α₁ = .1 # stay at desired velocity
 	α₂ = .001 # don't collide
 	p2_effort = 1.0
